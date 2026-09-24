@@ -1,0 +1,115 @@
+name: Yekpare Multi-Platform Release Matrix
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.target.target_name }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - os: darwin
+            arch: arm64
+            runner: macos-14
+            target_name: darwin-arm64
+            bin_suffix: ''
+          - os: darwin
+            arch: x64
+            runner: macos-13
+            target_name: darwin-x64
+            bin_suffix: ''
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+            target_name: linux-x64
+            bin_suffix: ''
+          - os: win32
+            arch: x64
+            runner: windows-latest
+            target_name: win32-x64
+            bin_suffix: '.exe'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (22.x)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Build standalone executable with Yekpare
+        run: npx yekpare build --target ${{ matrix.target.target_name }} --strip
+
+      - name: Validate built executable
+        shell: bash
+        run: |
+          ./dist/rowpipe${{ matrix.target.bin_suffix }} --version
+          ./dist/rowpipe${{ matrix.target.bin_suffix }} --help
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          mkdir -p release-pkg
+          cp ./dist/rowpipe${{ matrix.target.bin_suffix }} release-pkg/
+          cd release-pkg
+          if [ "${{ matrix.target.os }}" = "win32" ]; then
+            7z a ../rowpipe-${{ matrix.target.target_name }}.zip rowpipe${{ matrix.target.bin_suffix }}
+          else
+            tar -czvf ../rowpipe-${{ matrix.target.target_name }}.tar.gz rowpipe${{ matrix.target.bin_suffix }}
+          fi
+
+      - name: Upload Platform Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rowpipe-${{ matrix.target.target_name }}
+          path: rowpipe-*.*
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: build-release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate SHA-256 Checksums
+        shell: bash
+        working-directory: release-artifacts
+        run: |
+          sha256sum rowpipe-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/rowpipe-*.tar.gz
+            release-artifacts/rowpipe-*.zip
+            release-artifacts/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+

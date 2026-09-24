@@ -141,7 +141,7 @@ export function externalSort(options: SortOptions): TransformFunction {
         }
 
         const heapComparator = (a: HeapRunEntry, b: HeapRunEntry) => {
-          return rowComparator({ row: a.row, seq: a.seq }, { row: b.row, seq: b.seq });
+          return rowComparator(a, b);
         };
 
         const heap = new Heap<HeapRunEntry>(heapComparator);

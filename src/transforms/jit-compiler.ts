@@ -83,19 +83,19 @@ export const JIT_HELPERS = {
     return String(a) !== String(b);
   },
   gt: (a: unknown, b: unknown): boolean => {
-    if (a === null || a === undefined || b === null || b === undefined) return false;
+    if (a === null || a === undefined || b === null || b === undefined || a === "" || b === "") return false;
     return Number(a) > Number(b);
   },
   gte: (a: unknown, b: unknown): boolean => {
-    if (a === null || a === undefined || b === null || b === undefined) return false;
+    if (a === null || a === undefined || b === null || b === undefined || a === "" || b === "") return false;
     return Number(a) >= Number(b);
   },
   lt: (a: unknown, b: unknown): boolean => {
-    if (a === null || a === undefined || b === null || b === undefined) return false;
+    if (a === null || a === undefined || b === null || b === undefined || a === "" || b === "") return false;
     return Number(a) < Number(b);
   },
   lte: (a: unknown, b: unknown): boolean => {
-    if (a === null || a === undefined || b === null || b === undefined) return false;
+    if (a === null || a === undefined || b === null || b === undefined || a === "" || b === "") return false;
     return Number(a) <= Number(b);
   },
   add: (a: unknown, b: unknown): unknown => {
@@ -156,7 +156,7 @@ export const JIT_HELPERS = {
 
 /**
  * Translates an ASTNode into a safe, high-speed JavaScript code string.
- * Returns null if the expression contains unsupported dynamic features.
+ * Emits direct native inline expressions for comparisons and literals to eliminate function call overhead.
  */
 function generateJsCode(node: ASTNode): string | null {
   switch (node.type) {
@@ -166,7 +166,7 @@ function generateJsCode(node: ASTNode): string | null {
     case "Identifier": {
       if (!node.name.includes(".")) {
         const escapedCol = JSON.stringify(node.name);
-        return `((row[${escapedCol}] !== undefined && row[${escapedCol}] !== "") ? row[${escapedCol}] : null)`;
+        return `(row[${escapedCol}])`;
       }
       return `(h.get(row, ${JSON.stringify(node.name)}))`;
     }
@@ -190,18 +190,114 @@ function generateJsCode(node: ASTNode): string | null {
           return `(Boolean(${leftCode}) && Boolean(${rightCode}))`;
         case "||":
           return `(Boolean(${leftCode}) || Boolean(${rightCode}))`;
-        case "==":
-          return `(h.eq(${leftCode}, ${rightCode}))`;
-        case "!=":
-          return `(h.neq(${leftCode}, ${rightCode}))`;
-        case ">":
+
+        case ">": {
+          if (node.right.type === "Literal" && typeof node.right.value === "number") {
+            const num = node.right.value;
+            return `((${leftCode} != null && ${leftCode} !== "") && Number(${leftCode}) > ${num})`;
+          }
+          if (node.left.type === "Literal" && typeof node.left.value === "number") {
+            const num = node.left.value;
+            return `((${rightCode} != null && ${rightCode} !== "") && ${num} > Number(${rightCode}))`;
+          }
           return `(h.gt(${leftCode}, ${rightCode}))`;
-        case ">=":
+        }
+
+        case ">=": {
+          if (node.right.type === "Literal" && typeof node.right.value === "number") {
+            const num = node.right.value;
+            return `((${leftCode} != null && ${leftCode} !== "") && Number(${leftCode}) >= ${num})`;
+          }
+          if (node.left.type === "Literal" && typeof node.left.value === "number") {
+            const num = node.left.value;
+            return `((${rightCode} != null && ${rightCode} !== "") && ${num} >= Number(${rightCode}))`;
+          }
           return `(h.gte(${leftCode}, ${rightCode}))`;
-        case "<":
+        }
+
+        case "<": {
+          if (node.right.type === "Literal" && typeof node.right.value === "number") {
+            const num = node.right.value;
+            return `((${leftCode} != null && ${leftCode} !== "") && Number(${leftCode}) < ${num})`;
+          }
+          if (node.left.type === "Literal" && typeof node.left.value === "number") {
+            const num = node.left.value;
+            return `((${rightCode} != null && ${rightCode} !== "") && ${num} < Number(${rightCode}))`;
+          }
           return `(h.lt(${leftCode}, ${rightCode}))`;
-        case "<=":
+        }
+
+        case "<=": {
+          if (node.right.type === "Literal" && typeof node.right.value === "number") {
+            const num = node.right.value;
+            return `((${leftCode} != null && ${leftCode} !== "") && Number(${leftCode}) <= ${num})`;
+          }
+          if (node.left.type === "Literal" && typeof node.left.value === "number") {
+            const num = node.left.value;
+            return `((${rightCode} != null && ${rightCode} !== "") && ${num} <= Number(${rightCode}))`;
+          }
           return `(h.lte(${leftCode}, ${rightCode}))`;
+        }
+
+        case "==": {
+          if (node.right.type === "Literal") {
+            if (typeof node.right.value === "string") {
+              const str = JSON.stringify(node.right.value);
+              return `(${leftCode} === ${str} || (${leftCode} != null && String(${leftCode}) === ${str}))`;
+            }
+            if (typeof node.right.value === "number") {
+              const num = node.right.value;
+              return `((${leftCode} != null && ${leftCode} !== "") && Number(${leftCode}) === ${num})`;
+            }
+            if (typeof node.right.value === "boolean") {
+              const bool = node.right.value;
+              return `(Boolean(${leftCode}) === ${bool})`;
+            }
+            if (node.right.value === null) {
+              return `(${leftCode} == null || ${leftCode} === "")`;
+            }
+          }
+          if (node.left.type === "Literal") {
+            if (typeof node.left.value === "string") {
+              const str = JSON.stringify(node.left.value);
+              return `(${rightCode} === ${str} || (${rightCode} != null && String(${rightCode}) === ${str}))`;
+            }
+            if (typeof node.left.value === "number") {
+              const num = node.left.value;
+              return `((${rightCode} != null && ${rightCode} !== "") && Number(${rightCode}) === ${num})`;
+            }
+            if (typeof node.left.value === "boolean") {
+              const bool = node.left.value;
+              return `(Boolean(${rightCode}) === ${bool})`;
+            }
+            if (node.left.value === null) {
+              return `(${rightCode} == null || ${rightCode} === "")`;
+            }
+          }
+          return `(h.eq(${leftCode}, ${rightCode}))`;
+        }
+
+        case "!=": {
+          if (node.right.type === "Literal") {
+            if (typeof node.right.value === "string") {
+              const str = JSON.stringify(node.right.value);
+              return `(${leftCode} !== ${str} && (${leftCode} == null || String(${leftCode}) !== ${str}))`;
+            }
+            if (typeof node.right.value === "number") {
+              const num = node.right.value;
+              return `(${leftCode} == null || ${leftCode} === "" || Number(${leftCode}) !== ${num})`;
+            }
+            if (typeof node.right.value === "boolean") {
+              const bool = node.right.value;
+              return `(Boolean(${leftCode}) !== ${bool})`;
+            }
+            if (node.right.value === null) {
+              return `(${leftCode} != null && ${leftCode} !== "")`;
+            }
+          }
+          return `(h.neq(${leftCode}, ${rightCode}))`;
+        }
+
         case "+":
           return `(h.add(${leftCode}, ${rightCode}))`;
         case "-":

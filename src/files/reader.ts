@@ -12,9 +12,14 @@ import type { FileRecord, FileSystemReaderOptions, FileType } from "./types.js";
  * Normalizes a relative path to standard forward slashes.
  */
 function normalizeRelativePath(relPath: string): string {
-  let normalized = relPath.replace(/\\/g, "/");
-  while (normalized.startsWith("./")) {
-    normalized = normalized.slice(2);
+  if (!relPath) return ".";
+  let normalized = relPath.indexOf("\\") !== -1 ? relPath.replace(/\\/g, "/") : relPath;
+  if (normalized.charCodeAt(0) === 46 /* . */ && normalized.charCodeAt(1) === 47 /* / */) {
+    let start = 0;
+    while (normalized.startsWith("./", start)) {
+      start += 2;
+    }
+    normalized = normalized.slice(start);
   }
   return normalized || ".";
 }
@@ -112,11 +117,9 @@ export class FileSystemReader implements TabularReader {
           fileType = "directory";
         }
 
-        const normRelPath = normalizeRelativePath(relPath);
-
         const record: FileRecord = {
           path: fullPath,
-          relative_path: normRelPath,
+          relative_path: relPath,
           name,
           basename,
           extension,
@@ -146,7 +149,7 @@ export class FileSystemReader implements TabularReader {
         }
 
         if (hashAlgorithm && stat.isFile()) {
-          record.hash = await computeFileHash(fullPath, hashAlgorithm);
+          record.hash = await computeFileHash(fullPath, hashAlgorithm, stat);
         }
 
         return record;
@@ -185,7 +188,9 @@ export class FileSystemReader implements TabularReader {
       dirent: Dirent;
     }
 
-    const dirQueue: Array<{ dirPath: string; depth: number }> = [{ dirPath: rootPath, depth: 0 }];
+    const dirQueue: Array<{ dirPath: string; relDirPath: string; depth: number }> = [
+      { dirPath: rootPath, relDirPath: "", depth: 0 },
+    ];
 
     while (dirQueue.length > 0) {
       const current = dirQueue.shift()!;
@@ -220,7 +225,7 @@ export class FileSystemReader implements TabularReader {
           }
 
           const fullPath = path.join(current.dirPath, entryName);
-          const relPath = normalizeRelativePath(path.relative(rootPath, fullPath));
+          const relPath = current.relDirPath ? `${current.relDirPath}/${entryName}` : entryName;
 
           // Check excludes
           if (excludeMatcher(relPath)) {
@@ -229,7 +234,7 @@ export class FileSystemReader implements TabularReader {
 
           if (dirent.isDirectory()) {
             if (recursive && current.depth + 1 <= maxDepth) {
-              dirQueue.push({ dirPath: fullPath, depth: current.depth + 1 });
+              dirQueue.push({ dirPath: fullPath, relDirPath: relPath, depth: current.depth + 1 });
             }
 
             if (typeFilter === "directory" || typeFilter === "all") {
@@ -250,7 +255,7 @@ export class FileSystemReader implements TabularReader {
                 const targetStat = await fsPromises.stat(fullPath);
                 if (targetStat.isDirectory()) {
                   if (recursive && current.depth + 1 <= maxDepth) {
-                    dirQueue.push({ dirPath: fullPath, depth: current.depth + 1 });
+                    dirQueue.push({ dirPath: fullPath, relDirPath: relPath, depth: current.depth + 1 });
                   }
                   if (typeFilter === "directory" || typeFilter === "all") {
                     if (includeMatcher(relPath)) {

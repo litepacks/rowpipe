@@ -1,7 +1,7 @@
 import type { Aggregator, Row } from "../core/types.js";
 
 /**
- * Fast 32-bit FNV-1a hash function with 32-bit avalanche mixing.
+ * Fast 32-bit FNV-1a hash function with 32-bit avalanche mixing for strings.
  * Zero BigInt allocations, runs at native CPU register speed.
  */
 function hash32(str: string): number {
@@ -13,6 +13,23 @@ function hash32(str: string): number {
   }
   // Avalanche mixing
   h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/**
+ * Fast zero-allocation 32-bit integer & float mixer for numeric hashing without string allocations.
+ */
+function hashNumber32(n: number): number {
+  let h: number;
+  if (Number.isInteger(n)) {
+    h = (n ^ (n >>> 16) ^ 0x811c9dc5) >>> 0;
+  } else {
+    h = (((n * 100000) | 0) ^ 0x811c9dc5) >>> 0;
+  }
   h = Math.imul(h, 0x85ebca6b) >>> 0;
   h ^= h >>> 13;
   h = Math.imul(h, 0xc2b2ae35) >>> 0;
@@ -45,8 +62,10 @@ export class HyperLogLog {
 
   add(value: unknown): void {
     if (value === null || value === undefined) return;
-    const str = String(value);
-    const hash = hash32(str);
+    const hash =
+      typeof value === "number"
+        ? hashNumber32(value)
+        : hash32(typeof value === "string" ? value : String(value));
 
     // Low p bits for register index
     const index = hash & (this.m - 1);
@@ -239,7 +258,7 @@ export class StringStatsCollector {
       return;
     }
 
-    const str = String(val);
+    const str = typeof val === "string" ? val : String(val);
     if (str === "") {
       this.emptyCount++;
     }
@@ -252,8 +271,11 @@ export class StringStatsCollector {
     if (this.maxLength === null || str.length > this.maxLength) this.maxLength = str.length;
 
     // Track top values bounded
-    if (this.frequencyMap.size < this.maxTrackedValues || this.frequencyMap.has(str)) {
-      this.frequencyMap.set(str, (this.frequencyMap.get(str) || 0) + 1);
+    const currentCount = this.frequencyMap.get(str);
+    if (currentCount !== undefined) {
+      this.frequencyMap.set(str, currentCount + 1);
+    } else if (this.frequencyMap.size < this.maxTrackedValues) {
+      this.frequencyMap.set(str, 1);
     }
   }
 
@@ -280,7 +302,7 @@ interface ColumnHandler {
   col: string;
   numCollector: NumericStatsCollector;
   strCollector: StringStatsCollector;
-  hint: { numericVotes: number; totalVotes: number };
+  hint: { numericVotes: number; totalVotes: number; lockedType?: "numeric" | "string" };
 }
 
 /**
@@ -291,7 +313,7 @@ export class DatasetStatsAggregator implements Aggregator<DatasetStatsResult> {
   private targetColumn?: string;
   private numericCollectors = new Map<string, NumericStatsCollector>();
   private stringCollectors = new Map<string, StringStatsCollector>();
-  private columnTypeHints = new Map<string, { numericVotes: number; totalVotes: number }>();
+  private columnTypeHints = new Map<string, { numericVotes: number; totalVotes: number; lockedType?: "numeric" | "string" }>();
   private handlers: ColumnHandler[] = [];
   private initialized = false;
 
@@ -335,19 +357,43 @@ export class DatasetStatsAggregator implements Aggregator<DatasetStatsResult> {
       const h = handlers[i]!;
       const val = row[h.col];
 
-      h.strCollector.add(val);
-
-      if (val !== null && val !== undefined && val !== "") {
-        h.hint.totalVotes++;
-        const num = typeof val === "number" ? val : Number(val);
-        if (!Number.isNaN(num) && typeof val !== "boolean") {
-          h.hint.numericVotes++;
-          h.numCollector.add(num);
+      if (h.hint.lockedType === "numeric") {
+        if (val !== null && val !== undefined && val !== "") {
+          const num = typeof val === "number" ? val : Number(val);
+          if (!Number.isNaN(num) && typeof val !== "boolean") {
+            h.numCollector.add(num);
+          } else {
+            h.numCollector.add(null);
+          }
         } else {
           h.numCollector.add(null);
         }
+      } else if (h.hint.lockedType === "string") {
+        h.strCollector.add(val);
       } else {
-        h.numCollector.add(null);
+        // Warmup sampling phase (first 200 rows)
+        h.strCollector.add(val);
+
+        if (val !== null && val !== undefined && val !== "") {
+          h.hint.totalVotes++;
+          const num = typeof val === "number" ? val : Number(val);
+          if (!Number.isNaN(num) && typeof val !== "boolean") {
+            h.hint.numericVotes++;
+            h.numCollector.add(num);
+          } else {
+            h.numCollector.add(null);
+          }
+        } else {
+          h.numCollector.add(null);
+        }
+
+        if (h.hint.totalVotes >= 200) {
+          if (h.hint.numericVotes / h.hint.totalVotes >= 0.8) {
+            h.hint.lockedType = "numeric";
+          } else {
+            h.hint.lockedType = "string";
+          }
+        }
       }
     }
   }
@@ -356,7 +402,7 @@ export class DatasetStatsAggregator implements Aggregator<DatasetStatsResult> {
     const columns: Record<string, ColumnStatsResult> = {};
 
     for (const [col, hint] of this.columnTypeHints.entries()) {
-      const isNumeric = hint.totalVotes > 0 && hint.numericVotes / hint.totalVotes >= 0.8;
+      const isNumeric = hint.lockedType === "numeric" || (hint.totalVotes > 0 && hint.numericVotes / hint.totalVotes >= 0.8);
       const numCollector = this.numericCollectors.get(col)!;
       const strCollector = this.stringCollectors.get(col)!;
 

@@ -107,18 +107,21 @@ export async function* diffRows(options: DiffEngineOptions): AsyncIterable<DiffE
     }
   };
 
+  const explicitCompareCols = columns && columns.length > 0
+    ? columns.filter((col) => !keys.includes(col) && !ignore.includes(col))
+    : undefined;
+
   try {
     // ---------------------------------------------------------
     // Phase 1: Stream and Index Left Dataset
     // ---------------------------------------------------------
+    let cachedLeftKeysList: string[] = [];
+    let cachedLeftCompareCols: string[] = [];
+
     for await (const batch of leftReader.read(options.leftOptions)) {
       for (let i = 0; i < batch.rows.length; i++) {
         leftRowsCount++;
         const row = batch.rows[i]!;
-
-        for (const col of Object.keys(row)) {
-          allDiscoveredColumns.add(col);
-        }
 
         const { encoded, rawKey } = encodeCompositeKey(row, keys, { coerce: options.coerce });
 
@@ -142,13 +145,39 @@ export async function* diffRows(options: DiffEngineOptions): AsyncIterable<DiffE
           seenLeftKeys.set(encoded, leftRowsCount);
         }
 
-        // Determine compared columns for this row
-        const rowCompareCols = getEffectiveCompareColumns(
-          Object.keys(row),
-          keys,
-          columns,
-          ignore
-        );
+        // Determine compared columns for this row with memoized cache
+        let rowCompareCols: string[];
+        if (explicitCompareCols) {
+          rowCompareCols = explicitCompareCols;
+          if (leftRowsCount === 1) {
+            for (const col of Object.keys(row)) {
+              allDiscoveredColumns.add(col);
+            }
+          }
+        } else {
+          const rowKeys = Object.keys(row);
+          let match = rowKeys.length === cachedLeftKeysList.length;
+          if (match) {
+            for (let k = 0; k < rowKeys.length; k++) {
+              if (rowKeys[k] !== cachedLeftKeysList[k]) {
+                match = false;
+                break;
+              }
+            }
+          }
+
+          if (match) {
+            rowCompareCols = cachedLeftCompareCols;
+          } else {
+            for (let c = 0; c < rowKeys.length; c++) {
+              allDiscoveredColumns.add(rowKeys[c]!);
+            }
+            cachedLeftKeysList = rowKeys;
+            cachedLeftCompareCols = rowKeys.filter((col) => !keys.includes(col) && !ignore.includes(col));
+            rowCompareCols = cachedLeftCompareCols;
+          }
+        }
+
         const hash = computeRowFingerprint(row, rowCompareCols);
 
         await index.set(encoded, {
@@ -164,15 +193,17 @@ export async function* diffRows(options: DiffEngineOptions): AsyncIterable<DiffE
     // Phase 2: Stream and Compare Right Dataset
     // ---------------------------------------------------------
     const seenRightKeys = new Map<string, number>();
+    const comparisonOptions = {
+      coerce: options.coerce,
+      epsilon: options.epsilon,
+      ignoreCase: options.ignoreCase,
+      trim: options.trim,
+    };
 
     for await (const batch of rightReader.read(options.rightOptions)) {
       for (let i = 0; i < batch.rows.length; i++) {
         rightRowsCount++;
         const rightRow = batch.rows[i]!;
-
-        for (const col of Object.keys(rightRow)) {
-          allDiscoveredColumns.add(col);
-        }
 
         const { encoded, rawKey } = encodeCompositeKey(rightRow, keys, { coerce: options.coerce });
 
@@ -201,6 +232,11 @@ export async function* diffRows(options: DiffEngineOptions): AsyncIterable<DiffE
         if (!indexed) {
           // Key not in left dataset -> ADDED
           addedCount++;
+          if (rightRowsCount <= 10) {
+            for (const col of Object.keys(rightRow)) {
+              allDiscoveredColumns.add(col);
+            }
+          }
           yield {
             type: "added",
             key: rawKey,
@@ -211,22 +247,37 @@ export async function* diffRows(options: DiffEngineOptions): AsyncIterable<DiffE
         } else {
           // Key exists in left dataset -> Check for Changes
           const leftRow = indexed.row;
-          const combinedKeys = Array.from(
-            new Set([...Object.keys(leftRow), ...Object.keys(rightRow)])
-          );
-          const compareCols = getEffectiveCompareColumns(
-            combinedKeys,
-            keys,
-            columns,
-            ignore
-          );
+          let compareCols: string[];
 
-          const comparisonOptions = {
-            coerce: options.coerce,
-            epsilon: options.epsilon,
-            ignoreCase: options.ignoreCase,
-            trim: options.trim,
-          };
+          if (explicitCompareCols) {
+            compareCols = explicitCompareCols;
+          } else {
+            // Check if right row keys match cached list
+            const rightKeys = Object.keys(rightRow);
+            let match = rightKeys.length === cachedLeftKeysList.length;
+            if (match) {
+              for (let k = 0; k < rightKeys.length; k++) {
+                if (rightKeys[k] !== cachedLeftKeysList[k]) {
+                  match = false;
+                  break;
+                }
+              }
+            }
+
+            if (match) {
+              compareCols = cachedLeftCompareCols;
+            } else {
+              const combinedKeys = Array.from(
+                new Set([...Object.keys(leftRow), ...rightKeys])
+              );
+              compareCols = getEffectiveCompareColumns(
+                combinedKeys,
+                keys,
+                columns,
+                ignore
+              );
+            }
+          }
 
           const changes = compareRows(leftRow, rightRow, compareCols, comparisonOptions);
 

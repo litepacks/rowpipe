@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 
+// Suppress internal Node SEA and experimental embedder warnings in production CLI
+const _origEmitWarning = process.emitWarning;
+process.emitWarning = function (warning: string | Error, ...args: any[]) {
+  const msg = typeof warning === "string" ? warning : (warning && warning.message) || "";
+  if (
+    msg.includes("single-executable") ||
+    msg.includes("ExperimentalWarning") ||
+    msg.includes("require() provided to the main script embedded")
+  ) {
+    return;
+  }
+  return Reflect.apply(_origEmitWarning, process, [warning, ...args]);
+};
+
 import { existsSync } from "node:fs";
 import { Command } from "commander";
 import { RowpipeError } from "../core/errors.js";

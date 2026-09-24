@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, promises as fsPromises } from "node:fs";
+import { createReadStream, promises as fsPromises, Stats } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { FileSystemError } from "../core/errors.js";
 import type { HashAlgorithm } from "./types.js";
@@ -9,10 +9,11 @@ import type { HashAlgorithm } from "./types.js";
  */
 export async function computeFileHash(
   filePath: string,
-  algorithm: HashAlgorithm = "sha256"
+  algorithm: HashAlgorithm = "sha256",
+  stat?: Stats | { size: number; mtimeMs: number }
 ): Promise<string> {
   if (algorithm === "fast") {
-    return computeFastFileHash(filePath);
+    return computeFastFileHash(filePath, stat);
   }
 
   try {
@@ -32,9 +33,12 @@ export async function computeFileHash(
 /**
  * Computes a fast non-cryptographic fingerprint using file stat + partial content sampling.
  */
-export async function computeFastFileHash(filePath: string): Promise<string> {
+export async function computeFastFileHash(
+  filePath: string,
+  existingStat?: Stats | { size: number; mtimeMs: number }
+): Promise<string> {
   try {
-    const stat = await fsPromises.stat(filePath);
+    const stat = existingStat ?? (await fsPromises.stat(filePath));
     const size = stat.size;
     const mtimeMs = stat.mtimeMs;
 
@@ -50,16 +54,15 @@ export async function computeFastFileHash(filePath: string): Promise<string> {
     const fd = await fsPromises.open(filePath, "r");
 
     try {
-      const buffer = Buffer.alloc(sampleSize);
+      const buffer = Buffer.allocUnsafe(sampleSize);
       // Read header
-      await fd.read(buffer, 0, sampleSize, 0);
-      hash.update(buffer);
+      const { bytesRead: headerRead } = await fd.read(buffer, 0, sampleSize, 0);
+      hash.update(buffer.subarray(0, headerRead));
 
       if (size > sampleSize * 2) {
         // Read footer if large enough
-        const footerBuffer = Buffer.alloc(sampleSize);
-        await fd.read(footerBuffer, 0, sampleSize, size - sampleSize);
-        hash.update(footerBuffer);
+        const { bytesRead: footerRead } = await fd.read(buffer, 0, sampleSize, size - sampleSize);
+        hash.update(buffer.subarray(0, footerRead));
       }
     } finally {
       await fd.close();
@@ -74,3 +77,4 @@ export async function computeFastFileHash(filePath: string): Promise<string> {
     });
   }
 }
+
