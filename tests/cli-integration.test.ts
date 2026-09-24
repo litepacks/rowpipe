@@ -211,6 +211,31 @@ describe("CLI Integration Tests", { timeout: 30000 }, () => {
     const summary = JSON.parse(stdout);
     expect(summary.rows.changed).toBe(1);
   });
+
+  it("should return correct version with --version, -v, -V, and version command", async () => {
+    const pkg = JSON.parse(await fs.readFile(join(process.cwd(), "package.json"), "utf8"));
+    const expectedVersion = pkg.version;
+
+    const res1 = await execAsync(`node ${cliPath} --version`);
+    expect(res1.stdout.trim()).toBe(expectedVersion);
+
+    const res2 = await execAsync(`node ${cliPath} -v`);
+    expect(res2.stdout.trim()).toBe(expectedVersion);
+
+    const res3 = await execAsync(`node ${cliPath} -V`);
+    expect(res3.stdout.trim()).toBe(expectedVersion);
+
+    const res4 = await execAsync(`node ${cliPath} version`);
+    expect(res4.stdout.trim()).toBe(expectedVersion);
+  });
+
+  it("should handle empty parameter without hanging or crashing", async () => {
+    const resRoot = await execAsync(`node ${cliPath} ""`);
+    expect(resRoot.stdout).toContain("Usage: rowpipe");
+
+    const resInspect = await execAsync(`node ${cliPath} inspect ""`);
+    expect(resInspect.stdout).toContain("Usage: rowpipe inspect");
+  });
 });
 
 

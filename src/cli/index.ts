@@ -14,8 +14,9 @@ process.emitWarning = function (warning: string | Error, ...args: any[]) {
   return Reflect.apply(_origEmitWarning, process, [warning, ...args]);
 };
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, fstatSync } from "node:fs";
 import { Command } from "commander";
+import { VERSION } from "../version.js";
 import { RowpipeError } from "../core/errors.js";
 import { castCommand } from "./commands/cast.js";
 import { cleanCommand } from "./commands/clean.js";
@@ -91,10 +92,92 @@ process.stdout.on("error", (err: unknown) => {
 
 const program = new Command();
 
+export function getCliVersion(): string {
+  try {
+    const pkgUrl = new URL("../../package.json", import.meta.url);
+    if (existsSync(pkgUrl)) {
+      const pkg = JSON.parse(readFileSync(pkgUrl, "utf-8"));
+      if (pkg.version) return pkg.version;
+    }
+  } catch {
+    // fallback
+  }
+  return VERSION;
+}
+
+export function isStdinInteractive(): boolean {
+  if (process.stdin.isTTY) {
+    return true;
+  }
+  try {
+    const stat = fstatSync(0);
+    if (stat.isCharacterDevice() && !stat.isFIFO() && !stat.isFile() && !stat.isSocket()) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+const currentVersion = getCliVersion();
+
 program
   .name("rowpipe")
-  .description("Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Parquet, and Markdown")
-  .version("2.10.0");
+  .description("Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown")
+  .version(currentVersion, "-v, --version", "Output the current version")
+  .option("-V", "Output the current version", () => {
+    console.log(currentVersion);
+    process.exit(0);
+  });
+
+program
+  .command("version")
+  .description("Output version information")
+  .action(() => {
+    console.log(currentVersion);
+    process.exit(0);
+  });
+
+program.hook("preAction", (thisCommand, actionCommand) => {
+  const isRoot = actionCommand === program || actionCommand.name() === "rowpipe";
+  const firstArg = actionCommand.args[0];
+
+  // If explicit empty string argument was passed (e.g. rowpipe "" or rowpipe inspect "")
+  if (firstArg !== undefined && typeof firstArg === "string" && firstArg.trim() === "") {
+    actionCommand.outputHelp();
+    process.exit(0);
+  }
+
+  // If interactive terminal (no piped stdin data), prevent hanging waiting for stdin
+  if (isStdinInteractive()) {
+    if (isRoot) {
+      if (!firstArg || firstArg === "-") {
+        actionCommand.outputHelp();
+        process.exit(0);
+      }
+    } else {
+      const nonStreamCommands = new Set([
+        "db",
+        "diff",
+        "diff-files",
+        "join",
+        "fuzzy-join",
+        "concat",
+        "generate",
+        "completion",
+        "version",
+        "fetch",
+      ]);
+      if (!nonStreamCommands.has(actionCommand.name())) {
+        if (!firstArg || firstArg === "-") {
+          actionCommand.outputHelp();
+          process.exit(0);
+        }
+      }
+    }
+  }
+});
 
 // Global & Pipeline options on root command
 program
@@ -157,10 +240,15 @@ program
   .option("--on-error <strategy>", "Error handling strategy: abort (default), skip, or log", "abort")
   .option("--bad-rows-log <file>", "Write malformed or rejected rows to dead-letter log file")
   .action(async (input = "-", cmdOptions) => {
-    // If running root command with no input file and stdin is an interactive TTY, display help
-    if (input === "-" && process.stdin.isTTY) {
-      program.outputHelp();
-      return;
+    const rawInput = typeof input === "string" ? input.trim() : "";
+    if (!rawInput || rawInput === "-") {
+      if (isStdinInteractive()) {
+        program.outputHelp();
+        return;
+      }
+      input = "-";
+    } else {
+      input = rawInput;
     }
     await unifiedPipelineCommand(input, cmdOptions);
   });
