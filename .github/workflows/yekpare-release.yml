@@ -79,15 +79,15 @@ jobs:
             mkdir -p deb-pkg/DEBIAN deb-pkg/usr/bin
             cp ./dist/rowpipe deb-pkg/usr/bin/rowpipe
             chmod 0755 deb-pkg/usr/bin/rowpipe
-            cat << EOF > deb-pkg/DEBIAN/control
-Package: rowpipe
-Version: ${VERSION}
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: Ahmet Şimşek <iamaroott@gmail.com>
-Description: Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown
-EOF
+            {
+              echo "Package: rowpipe"
+              echo "Version: ${VERSION}"
+              echo "Section: utils"
+              echo "Priority: optional"
+              echo "Architecture: amd64"
+              echo "Maintainer: Ahmet Şimşek <iamaroott@gmail.com>"
+              echo "Description: Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown"
+            } > deb-pkg/DEBIAN/control
             dpkg-deb --build deb-pkg rowpipe_${VERSION}_amd64.deb
           fi
 
