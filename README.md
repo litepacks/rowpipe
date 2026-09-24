@@ -44,6 +44,10 @@ Rowpipe is available as a **standalone zero-dependency executable** (no Node.js 
 curl -fsSL https://raw.githubusercontent.com/litepacks/rowpipe/main/install.sh | bash
 ```
 
+#### 🍺 Homebrew (macOS & Linux)
+```bash
+brew install litepacks/rowpipe/rowpipe
+```
 
 #### 📦 Debian / Ubuntu (`apt` / `.deb`)
 ```bash
