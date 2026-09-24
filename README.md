@@ -56,14 +56,14 @@ brew install litepacks/rowpipe/rowpipe
 
 #### 📦 Debian / Ubuntu (`apt` / `.deb`)
 ```bash
-curl -sLO https://github.com/litepacks/rowpipe/releases/latest/download/rowpipe_2.10.1_amd64.deb
-sudo apt install -y ./rowpipe_2.10.1_amd64.deb
+curl -sLO https://github.com/litepacks/rowpipe/releases/latest/download/rowpipe_2.10.2_amd64.deb
+sudo apt install -y ./rowpipe_2.10.2_amd64.deb
 ```
 
 #### 🪟 Windows & GitHub Releases
 Pre-compiled standalone binaries for **macOS (Apple Silicon)**, **Linux (x64)**, and **Windows (x64)** are available on the [GitHub Releases](https://github.com/litepacks/rowpipe/releases) page:
 * `rowpipe-darwin-arm64.tar.gz` (macOS Apple Silicon M1/M2/M3/M4)
-* `rowpipe-linux-x64.tar.gz` / `rowpipe_2.10.1_amd64.deb` (Linux)
+* `rowpipe-linux-x64.tar.gz` / `rowpipe_2.10.2_amd64.deb` (Linux)
 * `rowpipe-win32-x64.zip` (Windows)
 
 ---
