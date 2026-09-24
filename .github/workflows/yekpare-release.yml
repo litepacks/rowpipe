@@ -71,12 +71,33 @@ jobs:
           else
             tar -czvf ../rowpipe-${{ matrix.target.target_name }}.tar.gz rowpipe${{ matrix.target.bin_suffix }}
           fi
+          cd ..
+
+          # Build Debian (.deb) package on Linux
+          if [ "${{ matrix.target.os }}" = "linux" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+            mkdir -p deb-pkg/DEBIAN deb-pkg/usr/bin
+            cp ./dist/rowpipe deb-pkg/usr/bin/rowpipe
+            chmod 0755 deb-pkg/usr/bin/rowpipe
+            cat << EOF > deb-pkg/DEBIAN/control
+Package: rowpipe
+Version: ${VERSION}
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Ahmet Şimşek <iamaroott@gmail.com>
+Description: Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown
+EOF
+            dpkg-deb --build deb-pkg rowpipe_${VERSION}_amd64.deb
+          fi
 
       - name: Upload Platform Artifact
         uses: actions/upload-artifact@v4
         with:
           name: rowpipe-${{ matrix.target.target_name }}
-          path: rowpipe-*.*
+          path: |
+            rowpipe-*.*
+            rowpipe_*.deb
 
   publish-github-release:
     name: Publish GitHub Release
@@ -95,12 +116,22 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
-      - name: Generate SHA-256 Checksums
+      - name: Generate SHA-256 Checksums & Prepare Formula
         shell: bash
         working-directory: release-artifacts
         run: |
-          sha256sum rowpipe-* > SHA256SUMS.txt
+          sha256sum rowpipe-* > SHA256SUMS.txt || true
           cat SHA256SUMS.txt
+
+          # Update Formula/rowpipe.rb with calculated checksums
+          DARWIN_ARM64_SHA=$(sha256sum rowpipe-darwin-arm64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
+          DARWIN_X64_SHA=$(sha256sum rowpipe-darwin-x64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
+          LINUX_X64_SHA=$(sha256sum rowpipe-linux-x64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
+
+          sed -i "s/REPLACE_WITH_DARWIN_ARM64_SHA256/${DARWIN_ARM64_SHA}/g" ../Formula/rowpipe.rb
+          sed -i "s/REPLACE_WITH_DARWIN_X64_SHA256/${DARWIN_X64_SHA}/g" ../Formula/rowpipe.rb
+          sed -i "s/REPLACE_WITH_LINUX_X64_SHA256/${LINUX_X64_SHA}/g" ../Formula/rowpipe.rb
+          cp ../Formula/rowpipe.rb ./rowpipe.rb
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -108,6 +139,8 @@ jobs:
           files: |
             release-artifacts/rowpipe-*.tar.gz
             release-artifacts/rowpipe-*.zip
+            release-artifacts/rowpipe_*.deb
+            release-artifacts/rowpipe.rb
             release-artifacts/SHA256SUMS.txt
           draft: false
           prerelease: false

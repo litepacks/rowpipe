@@ -35,19 +35,50 @@ Designed around stream backpressure and batch processing, Rowpipe processes mult
 
 ## Installation
 
+Rowpipe is available as a **standalone zero-dependency executable** (no Node.js required) as well as an npm package.
+
+### Option 1: Standalone Single Executable (Recommended)
+
+#### 🍏 macOS & 🐧 Linux (Universal 1-Line Installer)
 ```bash
+curl -fsSL https://raw.githubusercontent.com/litepacks/rowpipe/main/install.sh | bash
+```
+
+#### 🍺 Homebrew (macOS & Linux)
+```bash
+brew tap litepacks/tap
+brew install rowpipe
+```
+*(Or install directly from the repository formula)*
+```bash
+brew install litepacks/rowpipe/rowpipe
+```
+
+#### 📦 Debian / Ubuntu (`apt` / `.deb`)
+```bash
+curl -sLO https://github.com/litepacks/rowpipe/releases/latest/download/rowpipe_2.10.0_amd64.deb
+sudo apt install -y ./rowpipe_2.10.0_amd64.deb
+```
+
+#### 🪟 Windows & GitHub Releases
+Pre-compiled standalone binaries for **macOS (Apple Silicon & Intel)**, **Linux (x64)**, and **Windows (x64)** are available on the [GitHub Releases](https://github.com/litepacks/rowpipe/releases) page:
+* `rowpipe-darwin-arm64.tar.gz` (macOS Apple Silicon M1/M2/M3/M4)
+* `rowpipe-darwin-x64.tar.gz` (macOS Intel)
+* `rowpipe-linux-x64.tar.gz` / `rowpipe_2.10.0_amd64.deb` (Linux)
+* `rowpipe-win32-x64.zip` (Windows)
+
+---
+
+### Option 2: Via NPM (Node.js 20+)
+
+```bash
+# Global CLI installation
 npm install -g rowpipe
-```
 
-Or run directly via `npx`:
-
-```bash
+# Or run instantly without installation
 npx rowpipe --help
-```
 
-For use as a Node.js library:
-
-```bash
+# Or install as a programmatic library
 npm install rowpipe
 ```
 
