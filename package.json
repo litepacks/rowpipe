@@ -1,0 +1,67 @@
+{
+  "name": "rowpipe",
+  "version": "2.10.0",
+  "description": "Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "rowpipe": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "prepublishOnly": "npm run build && npm test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "tsx benchmarks/memory-bench.ts",
+    "benchmark:db": "tsx benchmarks/db-bench.ts",
+    "benchmark:diff": "tsx benchmarks/diff-bench.ts",
+    "benchmark:files": "tsx benchmarks/files-bench.ts",
+    "benchmark:ops": "tsx benchmarks/operations-bench.ts",
+    "benchmark:expr": "tsx benchmarks/expression-bench.ts"
+  },
+  "keywords": [
+    "csv",
+    "tsv",
+    "json",
+    "jsonl",
+    "ndjson",
+    "parquet",
+    "xlsx",
+    "markdown",
+    "streaming",
+    "tabular",
+    "data",
+    "cli",
+    "pipeline",
+    "analytics"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@bokuweb/zstd-wasm": "^0.0.27",
+    "commander": "^13.1.0",
+    "fzstd": "^0.1.1",
+    "hyparquet": "^1.30.1",
+    "hyparquet-compressors": "^1.1.1",
+    "mysql2": "^3.24.4",
+    "parquetjs-lite": "^0.8.7",
+    "pg": "^8.23.0",
+    "pg-query-stream": "^4.17.0",
+    "read-excel-file": "^9.3.10",
+    "write-excel-file": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}

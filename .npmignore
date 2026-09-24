@@ -1,0 +1,38 @@
+# Source and TypeScript
+src/
+tsconfig.json
+vitest.config.ts
+
+# Tests & Benchmarks
+tests/
+benchmarks/
+coverage/
+
+# Large Datasets & Samples
+samples/
+scratch*/
+*.csv
+*.tsv
+*.parquet
+*.xlsx
+*.jsonl
+*.gz
+
+# Agents & Internal IDE configs
+.agents/
+.gemini/
+.idea/
+.vscode/
+
+# Logs & OS artifacts
+*.log
+.DS_Store
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Git
+.git/
+.gitignore
+.github/

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+scratch*/
+samples/high_risk_2022.jsonl
+samples/us_counties_2022.csv
+samples/titanic.csv.gz
+samples/titanic.parquet
+samples/titanic.tsv

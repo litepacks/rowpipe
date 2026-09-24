@@ -1,0 +1,157 @@
+import type { TabularReader } from "../core/types.js";
+import { SchemaInferenceAggregator, type ColumnInferenceResult } from "../analytics/schema-inference.js";
+import { DatasetStatsAggregator } from "../analytics/stats.js";
+
+export interface ReportOptions {
+  title?: string;
+  outputPath?: string;
+}
+
+export async function generateHtmlReport(
+  reader: TabularReader,
+  fileName = "Dataset",
+  options: ReportOptions = {}
+): Promise<string> {
+  const schemaAgg = new SchemaInferenceAggregator();
+  const statsAgg = new DatasetStatsAggregator();
+
+  for await (const batch of reader.read()) {
+    for (const row of batch.rows) {
+      schemaAgg.add(row);
+      statsAgg.add(row);
+    }
+  }
+
+  const schema = schemaAgg.result();
+  const stats = statsAgg.result();
+  const title = options.title || `Rowpipe Health Report: ${fileName}`;
+
+  const rowCount = stats.totalRows;
+  const colCount = schema.columns.length;
+
+  const columnRowsHtml = schema.columns
+    .map((col: ColumnInferenceResult) => {
+      const colStats = stats.columns[col.name];
+      const nullCount = col.nullCount;
+      const totalCount = col.sampleCount + col.nullCount;
+      const nullPct = totalCount > 0 ? Math.round((nullCount / totalCount) * 100) : 0;
+      
+      const numStats = colStats?.numeric;
+      const strStats = colStats?.string;
+
+      const minVal = numStats && numStats.min !== null ? numStats.min : "-";
+      const maxVal = numStats && numStats.max !== null ? numStats.max : "-";
+      const meanVal = numStats && numStats.mean !== null ? numStats.mean.toFixed(2) : "-";
+      const distinctVal = numStats ? numStats.approxDistinct : (strStats ? strStats.approxDistinct : "-");
+
+      return `
+        <tr>
+          <td><strong>${col.name}</strong></td>
+          <td><span class="badge badge-type">${col.type}</span></td>
+          <td>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: ${nullPct}%"></div>
+            </div>
+            <span class="text-muted">${nullPct}% (${nullCount})</span>
+          </td>
+          <td>${distinctVal}</td>
+          <td>${minVal}</td>
+          <td>${maxVal}</td>
+          <td>${meanVal}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-grad: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+      --border: #334155;
+      --success: #34d399;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 2rem; line-height: 1.5; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    header { margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }
+    h1 { font-size: 1.75rem; background: var(--accent-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .meta { color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.25rem; }
+    .card-title { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .card-value { font-size: 1.5rem; font-weight: 700; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 0.75rem; overflow: hidden; border: 1px solid var(--border); }
+    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+    th { background: #182234; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+    tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+    .badge-type { background: #0369a1; color: #e0f2fe; }
+    .progress-bar { width: 80px; height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 0.5rem; }
+    .progress-fill { height: 100%; background: var(--danger); }
+    .text-muted { color: var(--text-muted); font-size: 0.75rem; }
+    footer { margin-top: 3rem; text-align: center; color: var(--text-muted); font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>${title}</h1>
+      <div class="meta">Generated by Rowpipe CLI &bull; Stream-first Tabular Intelligence</div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Total Records</div>
+        <div class="card-value">${rowCount.toLocaleString()}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Columns</div>
+        <div class="card-value">${colCount}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Target Source</div>
+        <div class="card-value" style="font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${fileName}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Memory Profile</div>
+        <div class="card-value" style="color: var(--success);">O(1) Streaming</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding: 0; overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Column Name</th>
+            <th>Inferred Type</th>
+            <th>Null %</th>
+            <th>Approx Distinct</th>
+            <th>Min</th>
+            <th>Max</th>
+            <th>Mean / Avg</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${columnRowsHtml}
+        </tbody>
+      </table>
+    </div>
+
+    <footer>
+      Powered by <strong>Rowpipe</strong> &bull; Zero-Dependency High-Throughput Stream Engine
+    </footer>
+  </div>
+</body>
+</html>`;
+}
