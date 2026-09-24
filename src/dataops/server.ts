@@ -17,7 +17,7 @@ export interface ServerOptions {
 }
 
 export function startApiServer(options: ServerOptions): Server {
-  const port = options.port || 3000;
+  const port = typeof options.port === "number" ? options.port : 3000;
   const host = options.host || "0.0.0.0";
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {

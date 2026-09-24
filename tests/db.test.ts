@@ -393,13 +393,13 @@ describe("Database Streaming & Adapter Test Suite", () => {
       const csvPath = join(TEST_DIR, "import.csv");
       writeFileSync(csvPath, "id,city,population\n1,Tokyo,37400000\n2,Delhi,29300000\n3,Shanghai,26300000\n");
 
-      execSync(`node ${CLI_PATH} ${csvPath} --to-db sqlite://${TARGET_DB_FILE} --to-table cities --create-table`);
+      execSync(`"${process.execPath}" --experimental-sqlite "${CLI_PATH}" "${csvPath}" --to-db sqlite://${TARGET_DB_FILE} --to-table cities --create-table`);
 
       const verifyAdapter = new SqliteDatabaseAdapter({ dialect: "sqlite", url: `sqlite://${TARGET_DB_FILE}`, filePath: TARGET_DB_FILE, sanitizedUrl: `sqlite://${TARGET_DB_FILE}` });
       const schema = await verifyAdapter.getTableSchema("cities");
       expect(schema).toBeDefined();
 
-      const output = execSync(`node ${CLI_PATH} db sqlite://${TARGET_DB_FILE} --table cities --to jsonl`).toString();
+      const output = execSync(`"${process.execPath}" --experimental-sqlite "${CLI_PATH}" db sqlite://${TARGET_DB_FILE} --table cities --to jsonl`).toString();
       const lines = output.trim().split("\n");
       expect(lines.length).toBe(3);
       expect(JSON.parse(lines[0]).city).toBe("Tokyo");
@@ -420,10 +420,10 @@ describe("Database Streaming & Adapter Test Suite", () => {
       await srcAdapter.close();
 
       // db -> db with filter and create table
-      execSync(`node ${CLI_PATH} db sqlite://${sourceDb} --table logs --filter 'level == "ERROR"' --to-db sqlite://${destDb} --to-table error_logs --create-table`);
+      execSync(`"${process.execPath}" --experimental-sqlite "${CLI_PATH}" db sqlite://${sourceDb} --table logs --filter 'level == "ERROR"' --to-db sqlite://${destDb} --to-table error_logs --create-table`);
 
       const destAdapter = new SqliteDatabaseAdapter({ dialect: "sqlite", url: `sqlite://${destDb}`, filePath: destDb, sanitizedUrl: `sqlite://${destDb}` });
-      const destOut = execSync(`node ${CLI_PATH} db sqlite://${destDb} --table error_logs --to jsonl`).toString();
+      const destOut = execSync(`"${process.execPath}" --experimental-sqlite "${CLI_PATH}" db sqlite://${destDb} --table error_logs --to jsonl`).toString();
       const lines = destOut.trim().split("\n");
       expect(lines.length).toBe(1);
       expect(JSON.parse(lines[0]).message).toBe("Null pointer");
@@ -444,7 +444,7 @@ describe("Database Streaming & Adapter Test Suite", () => {
 
       // diff db table against CSV file with --coerce
       const diffOut = execSync(
-        `node ${CLI_PATH} diff 'sqlite://${DB_FILE}?table=members' ${csvPath} --key id --coerce --json`
+        `"${process.execPath}" --experimental-sqlite "${CLI_PATH}" diff 'sqlite://${DB_FILE}?table=members' "${csvPath}" --key id --coerce --json`
       ).toString();
 
       const diff = JSON.parse(diffOut);

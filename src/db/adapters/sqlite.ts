@@ -78,8 +78,13 @@ export class SqliteDatabaseAdapter implements DatabaseAdapter {
     let currentBatch: Row[] = [];
     let offset = 0;
 
+    const rowsIterable: Iterable<any> =
+      typeof (stmt as any).iterate === "function"
+        ? (stmt as any).iterate(...params)
+        : (stmt as any).all(...params);
+
     try {
-      for (const rawRow of stmt.iterate(...params)) {
+      for (const rawRow of rowsIterable) {
         if (options.signal?.aborted) {
           break;
         }
