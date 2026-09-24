@@ -171,4 +171,5 @@ export * from "./utils/progress.js";
 export * from "./utils/heap.js";
 export * from "./utils/ring-buffer.js";
 export * from "./utils/keystore.js";
-
+// MCP (Model Context Protocol) Server
+export * from "./mcp/index.js";

@@ -1,7 +1,7 @@
 class Rowpipe < Formula
   desc "Stream-first tabular data toolkit for CSV, TSV, JSON, XLSX, Parquet, and Markdown"
   homepage "https://github.com/litepacks/rowpipe"
-  version "2.10.3"
+  version "2.10.4"
   license "MIT"
 
   on_macos do

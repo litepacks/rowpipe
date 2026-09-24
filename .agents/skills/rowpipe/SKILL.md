@@ -72,6 +72,7 @@ Rowpipe is a high-performance, stream-first command-line toolkit and Node.js lib
 | **Serve** | `rowpipe serve <file> [--port 3000] [--host 0.0.0.0]` | Zero-dependency streaming HTTP REST API server with query filters |
 | **Report** | `rowpipe report <file> [--output report.html] [--open]` | Offline self-contained interactive HTML data health dashboard |
 | **Fetch** | `rowpipe fetch <url> [--paginate page\|offset\|cursor] [--data-path items]` | Stream remote JSON/CSV REST APIs with pagination and envelope extraction |
+| **MCP Server** | `rowpipe mcp [tools\|call\|install\|status\|logs] [-b]` | Native Model Context Protocol (MCP) server exposing 9 tabular data tools and resources for AI agents |
 
 ---
 
@@ -478,6 +479,52 @@ rowpipe convert messy.jsonl out.csv --on-error log --bad-rows-log dead-letter.js
 # 3. Fault-tolerant mapping with bad row logging
 rowpipe map sales.csv "profit = revenue - cost" --on-error log --bad-rows-log map_errors.jsonl
 ```
+
+---
+
+## 14. 🤖 Model Context Protocol (MCP) Server for AI Agents
+
+Rowpipe embeds an MCP server powered by `mcponce` providing LLMs and agents direct streaming access to inspect, query, profile, diff, and convert tabular data with zero-memory exhaustion.
+
+### Registered Tools
+1. `rowpipe_inspect`: File size, row/column counts, types, null %, distinct %, sheet summaries.
+2. `rowpipe_query`: Expressions, column projections, maps, casting, sorting, limit/offset.
+3. `rowpipe_schema`: Schema inference, SQL types, and semantic patterns (`email`, `url`, `uuid`).
+4. `rowpipe_stats`: Numerical and string summary statistics.
+5. `rowpipe_sample`: $O(k)$ bounded reservoir sampling with seeds.
+6. `rowpipe_convert`: Format conversions across CSV, TSV, JSON, JSONL, Parquet, XLSX, Markdown.
+7. `rowpipe_diff`: Keyed row-level and schema diffing across files and databases.
+8. `rowpipe_profile`: Full data profiling, null rates, and quality warnings.
+9. `rowpipe_table`: Clean aligned terminal/preview table rendering.
+
+### Dynamic Resource Templates
+- `rowpipe://metadata/{filePath}`: Instant dataset metadata and workbook sheet summaries.
+- `rowpipe://schema/{filePath}`: Inferred column schemas and semantic classifications.
+
+### CLI Usage
+```bash
+# Start standard MCP stdio server
+rowpipe mcp
+
+# List all available tools and schema definitions
+rowpipe mcp tools
+
+# Execute a tool directly from CLI
+rowpipe mcp call rowpipe_inspect --filePath ./sales.csv
+rowpipe mcp call rowpipe_query --filePath ./sales.csv --filter "revenue > 1000" --select "name,revenue"
+
+# Run in background daemon mode
+rowpipe mcp -b
+
+# Install into Claude Desktop or Cursor configuration
+rowpipe mcp install claude
+rowpipe mcp install cursor
+
+# Check server status and logs
+rowpipe mcp status
+rowpipe mcp logs
+```
+
 
 
 

@@ -82,6 +82,7 @@ import { testCommand } from "./commands/test.js";
 import { serveCommand } from "./commands/serve.js";
 import { reportCommand } from "./commands/report.js";
 import { fetchCommand } from "./commands/fetch.js";
+import { mcpCommand } from "./commands/mcp.js";
 
 // Handle broken pipe gracefully when piping to head/less
 process.stdout.on("error", (err: unknown) => {
@@ -1707,6 +1708,15 @@ program
     if (cmdOptions.pageSize) opts.pageSize = parseInt(cmdOptions.pageSize, 10);
     if (cmdOptions.maxPages) opts.maxPages = parseInt(cmdOptions.maxPages, 10);
     await fetchCommand(url, opts);
+  });
+
+// 65. mcp
+program
+  .command("mcp [args...]")
+  .description("Model Context Protocol (MCP) server for Claude Desktop, Cursor, Antigravity, and AI agents")
+  .allowUnknownOption(true)
+  .action(async (args) => {
+    await mcpCommand(args || []);
   });
 
 async function main() {

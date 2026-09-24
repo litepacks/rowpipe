@@ -56,14 +56,14 @@ brew install litepacks/rowpipe/rowpipe
 
 #### 📦 Debian / Ubuntu (`apt` / `.deb`)
 ```bash
-curl -sLO https://github.com/litepacks/rowpipe/releases/latest/download/rowpipe_2.10.3_amd64.deb
-sudo apt install -y ./rowpipe_2.10.3_amd64.deb
+curl -sLO https://github.com/litepacks/rowpipe/releases/latest/download/rowpipe_2.10.4_amd64.deb
+sudo apt install -y ./rowpipe_2.10.4_amd64.deb
 ```
 
 #### 🪟 Windows & GitHub Releases
 Pre-compiled standalone binaries for **macOS (Apple Silicon)**, **Linux (x64)**, and **Windows (x64)** are available on the [GitHub Releases](https://github.com/litepacks/rowpipe/releases) page:
 * `rowpipe-darwin-arm64.tar.gz` (macOS Apple Silicon M1/M2/M3/M4)
-* `rowpipe-linux-x64.tar.gz` / `rowpipe_2.10.3_amd64.deb` (Linux)
+* `rowpipe-linux-x64.tar.gz` / `rowpipe_2.10.4_amd64.deb` (Linux)
 * `rowpipe-win32-x64.zip` (Windows)
 
 ---
@@ -79,6 +79,126 @@ npx rowpipe --help
 
 # Or install as a programmatic library
 npm install rowpipe
+```
+
+---
+
+## Model Context Protocol (MCP) Server
+
+Rowpipe includes a native, production-ready **Model Context Protocol (MCP)** server powered by `mcponce`, enabling AI coding assistants and agents (Claude Desktop, Cursor, Antigravity, OpenDevin, etc.) to inspect, query, transform, convert, and diff massive tabular datasets with bounded $O(1)$ memory.
+
+### 🤖 9 Core Tabular Tools
+1. **`rowpipe_inspect`**: Inspect file size, row/column counts, types, null percentages, approximate distinct rates, and XLSX sheet breakdowns.
+2. **`rowpipe_query`**: Stream-query with filter expressions, column selection, renaming, maps, casting, sorting, and pagination.
+3. **`rowpipe_schema`**: Infer accurate schemas, SQL data types, null rates, and semantic types (`email`, `url`, `uuid`, etc.).
+4. **`rowpipe_stats`**: Calculate summary statistics (min, max, mean, sum, quantiles, approx distinct) for numeric and string columns.
+5. **`rowpipe_sample`**: Reservoir sampling with bounded $O(k)$ memory and deterministic random seeds.
+6. **`rowpipe_convert`**: High-throughput format conversion across CSV, TSV, JSON, JSONL, Parquet, XLSX, and Markdown.
+7. **`rowpipe_diff`**: Key-based row-level dataset diffing with added/removed/changed metrics and schema diffing.
+8. **`rowpipe_profile`**: Deep data profiling, distributions, and quality warnings.
+9. **`rowpipe_table`**: Render clean, aligned Unicode/ASCII preview tables.
+
+### 🌐 Dynamic Resource Templates
+- `rowpipe://metadata/{filePath}`: Returns dataset metadata, size, format, and sheet summaries.
+- `rowpipe://schema/{filePath}`: Returns inferred schema and semantic classifications.
+
+### 💻 MCP CLI Usage
+```bash
+# Start standard MCP stdio server
+rowpipe mcp
+
+# List all registered tools and parameter schemas
+rowpipe mcp tools
+
+# Execute any tool directly from CLI
+rowpipe mcp call rowpipe_inspect --filePath ./sales.csv
+rowpipe mcp call rowpipe_query --filePath ./sales.csv --filter "revenue > 1000" --select "name,revenue"
+
+# Run in background daemon mode
+rowpipe mcp -b
+
+# Install into Claude Desktop or Cursor configuration automatically
+rowpipe mcp install claude
+rowpipe mcp install cursor
+
+# Check server status and view logs
+rowpipe mcp status
+rowpipe mcp logs
+```
+
+### ⚙️ Manual MCP Client Configuration
+
+You can configure `rowpipe` manually in any MCP-compatible client:
+
+#### 1. Claude Desktop
+Add `rowpipe` under `mcpServers` in your Claude Desktop configuration file:
+* **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+* **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+**Using installed `rowpipe` binary (Standalone or Global npm):**
+```json
+{
+  "mcpServers": {
+    "rowpipe": {
+      "command": "rowpipe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Using `npx` (No installation needed):**
+```json
+{
+  "mcpServers": {
+    "rowpipe": {
+      "command": "npx",
+      "args": ["-y", "rowpipe", "mcp"]
+    }
+  }
+}
+```
+
+#### 2. Cursor
+* **UI**: Go to **Settings** (`Cmd+,` or `Ctrl+,`) → **Features** → **MCP Servers** → **Add New MCP Server**:
+  * **Type**: `command`
+  * **Name**: `rowpipe`
+  * **Command**: `rowpipe mcp` (or `npx -y rowpipe mcp`)
+* **Project Configuration**: Create `.cursor/mcp.json` in your workspace root:
+```json
+{
+  "mcpServers": {
+    "rowpipe": {
+      "command": "rowpipe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### 3. Windsurf, Antigravity & VS Code (Cline / Roo Code)
+Add to your client's MCP settings (`mcp_config.json` or `cline_mcp_settings.json`):
+```json
+{
+  "mcpServers": {
+    "rowpipe": {
+      "command": "rowpipe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### 📦 Programmatic Usage (Node.js / TypeScript)
+```typescript
+import { createRowpipeMcpServer } from "rowpipe";
+
+const server = createRowpipeMcpServer();
+const result = await server.callTool("rowpipe_inspect", {
+  filePath: "./large_dataset.parquet"
+});
+console.log(result.data);
 ```
 
 ---

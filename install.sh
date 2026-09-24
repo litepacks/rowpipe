@@ -46,7 +46,7 @@ echo "==> Identified target: $TARGET"
 # Get latest release tag
 LATEST_TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
 if [ -z "$LATEST_TAG" ]; then
-  LATEST_TAG="v2.10.3"
+  LATEST_TAG="v2.10.4"
 fi
 
 TARBALL="rowpipe-${TARGET}.tar.gz"

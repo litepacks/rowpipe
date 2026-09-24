@@ -156,10 +156,10 @@ export class JSONReader implements TabularReader {
           if (!inArray) {
             if (char === "[") {
               inArray = true;
-              cursor++;
-              byteOffset++;
-              continue;
             }
+            cursor++;
+            byteOffset++;
+            continue;
           } else {
             // Inside array: looking for objects '{ ... }'
             if (char === "{") {
