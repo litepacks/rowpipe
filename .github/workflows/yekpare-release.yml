@@ -19,11 +19,6 @@ jobs:
             runner: macos-14
             target_name: darwin-arm64
             bin_suffix: ''
-          - os: darwin
-            arch: x64
-            runner: macos-13
-            target_name: darwin-x64
-            bin_suffix: ''
           - os: linux
             arch: x64
             runner: ubuntu-latest
@@ -125,11 +120,9 @@ jobs:
 
           # Update Formula/rowpipe.rb with calculated checksums
           DARWIN_ARM64_SHA=$(sha256sum rowpipe-darwin-arm64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
-          DARWIN_X64_SHA=$(sha256sum rowpipe-darwin-x64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
           LINUX_X64_SHA=$(sha256sum rowpipe-linux-x64.tar.gz 2>/dev/null | awk '{print $1}' || echo "")
 
           sed -i "s/REPLACE_WITH_DARWIN_ARM64_SHA256/${DARWIN_ARM64_SHA}/g" ../Formula/rowpipe.rb
-          sed -i "s/REPLACE_WITH_DARWIN_X64_SHA256/${DARWIN_X64_SHA}/g" ../Formula/rowpipe.rb
           sed -i "s/REPLACE_WITH_LINUX_X64_SHA256/${LINUX_X64_SHA}/g" ../Formula/rowpipe.rb
           cp ../Formula/rowpipe.rb ./rowpipe.rb
 

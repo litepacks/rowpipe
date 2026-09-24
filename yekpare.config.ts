@@ -10,7 +10,6 @@ export default defineConfig({
   // Target platforms for distribution
   targets: [
     "darwin-arm64",
-    "darwin-x64",
     "linux-x64",
     "linux-arm64",
     "win32-x64",

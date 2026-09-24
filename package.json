@@ -1,6 +1,6 @@
 {
   "name": "rowpipe",
-  "version": "2.10.1",
+  "version": "2.10.2",
   "description": "Stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
