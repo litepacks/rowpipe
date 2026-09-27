@@ -104,27 +104,41 @@ class ColumnProfiler {
       return;
     }
 
-    const valStr = String(val);
-    this.hll.add(valStr);
-
-    // Track top frequency for up to 1000 distinct items
-    if (this.frequencies.size < 1000 || this.frequencies.has(valStr)) {
-      this.frequencies.set(valStr, (this.frequencies.get(valStr) || 0) + 1);
-    }
-
     const primType = classifyPrimitiveType(val);
     this.typeCounts[primType] = (this.typeCounts[primType] || 0) + 1;
 
-    // Semantic type detection
-    if (typeof val === "string" && val.length > 2) {
+    if (typeof val === "number") {
+      this.hll.addNumber(val);
+      if (this.frequencies.size < 1000) {
+        const valStr = "" + val;
+        this.frequencies.set(valStr, (this.frequencies.get(valStr) || 0) + 1);
+      }
+    } else {
+      const valStr = typeof val === "string" ? val : String(val);
+      this.hll.addString(valStr);
+
+      // Track top frequency for up to 1000 distinct items
+      if (this.frequencies.size < 1000 || this.frequencies.has(valStr)) {
+        this.frequencies.set(valStr, (this.frequencies.get(valStr) || 0) + 1);
+      }
+    }
+
+    // Semantic type detection only on strings
+    if (primType === "string" && typeof val === "string" && val.length > 2) {
       const sem = detectSemanticType(val);
       if (sem) {
         this.semanticCounts[sem] = (this.semanticCounts[sem] || 0) + 1;
       }
     }
 
-    // Numeric aggregation
-    const numVal = typeof val === "number" ? val : (typeof val === "string" && /^-?\d+(?:\.\d+)?$/.test(val.trim()) ? Number(val) : NaN);
+    // Numeric aggregation - reuse primType classification instead of regex
+    let numVal = NaN;
+    if (typeof val === "number") {
+      numVal = val;
+    } else if (primType === "integer" || primType === "number" || primType === "decimal") {
+      numVal = Number(val);
+    }
+
     if (!Number.isNaN(numVal)) {
       this.numericCount++;
       this.numSum += numVal;
@@ -241,13 +255,13 @@ export class DatasetProfiler implements Aggregator<DatasetProfileResult> {
 
   add(row: Row): void {
     this.totalRows++;
-    for (const [col, val] of Object.entries(row)) {
+    for (const col in row) {
       let profiler = this.columnProfilers.get(col);
       if (!profiler) {
         profiler = new ColumnProfiler(col);
         this.columnProfilers.set(col, profiler);
       }
-      profiler.add(val);
+      profiler.add(row[col]);
     }
   }
 

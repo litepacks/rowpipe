@@ -20,17 +20,56 @@ const ISO_CURRENCIES = new Set([
  */
 export function detectSemanticType(value: unknown): SemanticType | null {
   if (value === null || value === undefined) return null;
-  const str = String(value).trim();
-  if (str.length === 0) return null;
+  const str = typeof value === "string" ? value.trim() : String(value).trim();
+  const len = str.length;
+  if (len < 2 || len > 256) return null;
 
-  if (UUID_REGEX.test(str)) return "uuid";
-  if (EMAIL_REGEX.test(str)) return "email";
-  if (URL_REGEX.test(str)) return "url";
-  if (IPV4_REGEX.test(str)) return "ipv4";
-  if (IPV6_REGEX.test(str)) return "ipv6";
-  if (str.length >= 2 && str.length <= 3 && ISO_COUNTRY_CODES.has(str.toUpperCase())) return "country-code";
-  if (str.length === 3 && ISO_CURRENCIES.has(str.toUpperCase())) return "currency";
-  if (PHONE_REGEX.test(str) && /\d{4,}/.test(str) && (str.startsWith("+") || str.includes("-") || str.includes("("))) return "phone";
+  // UUID is exactly 36 chars with hyphens
+  if (len === 36 && str.charCodeAt(8) === 45 && UUID_REGEX.test(str)) {
+    return "uuid";
+  }
+
+  // Email must contain @ and .
+  if (str.includes("@") && str.includes(".") && EMAIL_REGEX.test(str)) {
+    return "email";
+  }
+
+  // URL must start with http:// or https://
+  if ((str.startsWith("http://") || str.startsWith("https://")) && URL_REGEX.test(str)) {
+    return "url";
+  }
+
+  // IPv4 is 7 to 15 chars and contains .
+  if (len >= 7 && len <= 15 && str.includes(".") && IPV4_REGEX.test(str)) {
+    return "ipv4";
+  }
+
+  // IPv6 contains :
+  if (str.includes(":") && IPV6_REGEX.test(str)) {
+    return "ipv6";
+  }
+
+  // Country code is 2 chars (e.g. US, TR, DE)
+  if (len === 2 && ISO_COUNTRY_CODES.has(str.toUpperCase())) {
+    return "country-code";
+  }
+
+  // Currency is 3 chars (e.g. USD, EUR, TRY)
+  if (len === 3 && ISO_CURRENCIES.has(str.toUpperCase())) {
+    return "currency";
+  }
+
+  // Phone number
+  if (
+    len >= 7 &&
+    len <= 25 &&
+    (str.startsWith("+") || str.includes("-") || str.includes("(")) &&
+    PHONE_REGEX.test(str) &&
+    /\d{4,}/.test(str)
+  ) {
+    return "phone";
+  }
 
   return null;
 }
+

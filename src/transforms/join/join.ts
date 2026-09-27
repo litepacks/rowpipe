@@ -1,4 +1,4 @@
-import { encodeCompositeKey } from "../../diff/key.js";
+import { encodeCompositeKeyString, encodeSingleKeyValue } from "../../diff/key.js";
 import { InvalidArgumentError } from "../../core/errors.js";
 import type { DataBatch, DataStream, Row, TabularReader, TransformFunction } from "../../core/types.js";
 import { SpillableJoinIndex } from "./index-storage.js";
@@ -42,79 +42,108 @@ export function parseJoinKeys(options: JoinOptions): JoinKeyMapping {
 }
 
 /**
- * Generates an encoded lookup key for a row given key columns.
+ * Generates an optimized key extractor for a row given key columns.
  */
-function getRowKey(row: Row, keyCols: string[]): string {
-  return encodeCompositeKey(row, keyCols).encoded;
+function createRowKeyExtractor(keyCols: string[]): (row: Row) => string {
+  const len = keyCols.length;
+  if (len === 1) {
+    const col0 = keyCols[0]!;
+    return (row: Row) => encodeSingleKeyValue(row[col0]);
+  }
+  if (len === 2) {
+    const col0 = keyCols[0]!;
+    const col1 = keyCols[1]!;
+    return (row: Row) =>
+      encodeSingleKeyValue(row[col0]) + "|" + encodeSingleKeyValue(row[col1]);
+  }
+  return (row: Row) => encodeCompositeKeyString(row, keyCols);
 }
 
 /**
- * Merges a left row and right row, handling colliding column names.
+ * Compiles a zero-allocation row merger for joining left and right rows.
  */
-function mergeRows(
+function createRowMerger(
+  joinKeys: JoinKeyMapping,
+  options: JoinOptions
+): (
   leftRow: Row | null,
   rightRow: Row | null,
-  joinKeys: JoinKeyMapping,
-  options: JoinOptions,
   sampleLeftCols?: string[],
   sampleRightCols?: string[]
-): Row {
-  const result: Row = {};
+) => Row {
+  const leftKeySet = new Set(joinKeys.left);
+  const rightKeyMap = new Map<string, string>();
+  for (let i = 0; i < joinKeys.right.length; i++) {
+    rightKeyMap.set(joinKeys.right[i]!, joinKeys.left[i]!);
+  }
+
   const prefixRight = options.prefixRight || "";
-  const suffixRight = options.suffixRight !== undefined ? options.suffixRight : (prefixRight ? "" : "_right");
+  const suffixRight =
+    options.suffixRight !== undefined
+      ? options.suffixRight
+      : prefixRight
+        ? ""
+        : "_right";
   const prefixLeft = options.prefixLeft || "";
   const suffixLeft = options.suffixLeft || "";
 
-  if (leftRow) {
-    for (const [k, v] of Object.entries(leftRow)) {
-      const isKey = joinKeys.left.includes(k);
-      const outKey = isKey ? k : `${prefixLeft}${k}${suffixLeft}`;
-      result[outKey] = v;
-    }
-  } else if (sampleLeftCols) {
-    for (const col of sampleLeftCols) {
-      const isKey = joinKeys.left.includes(col);
-      const outKey = isKey ? col : `${prefixLeft}${col}${suffixLeft}`;
-      result[outKey] = null;
-    }
-  }
+  const hasLeftDecoration = prefixLeft.length > 0 || suffixLeft.length > 0;
+  const hasRightDecoration =
+    prefixRight.length > 0 || (suffixRight.length > 0 && suffixRight !== "_right");
 
-  if (rightRow) {
-    for (const [k, v] of Object.entries(rightRow)) {
-      const rightKeyIdx = joinKeys.right.indexOf(k);
-      if (rightKeyIdx >= 0) {
-        // This is a join key column
-        const leftKeyName = joinKeys.left[rightKeyIdx]!;
-        if (!leftRow) {
-          result[leftKeyName] = v;
+  return function merge(
+    leftRow: Row | null,
+    rightRow: Row | null,
+    sampleLeftCols?: string[],
+    sampleRightCols?: string[]
+  ): Row {
+    const result: Row = {};
+
+    if (leftRow) {
+      for (const k in leftRow) {
+        const isKey = leftKeySet.has(k);
+        const outKey = isKey || !hasLeftDecoration ? k : `${prefixLeft}${k}${suffixLeft}`;
+        result[outKey] = leftRow[k];
+      }
+    } else if (sampleLeftCols) {
+      for (let i = 0; i < sampleLeftCols.length; i++) {
+        const col = sampleLeftCols[i]!;
+        const isKey = leftKeySet.has(col);
+        const outKey = isKey || !hasLeftDecoration ? col : `${prefixLeft}${col}${suffixLeft}`;
+        result[outKey] = null;
+      }
+    }
+
+    if (rightRow) {
+      for (const k in rightRow) {
+        const leftKeyName = rightKeyMap.get(k);
+        if (leftKeyName !== undefined) {
+          if (!leftRow) {
+            result[leftKeyName] = rightRow[k];
+          }
+          continue;
         }
-        continue;
-      }
 
-      // Check if collides with left row non-key column
-      let targetKey = k;
-      if (leftRow && k in leftRow) {
-        targetKey = `${prefixRight}${k}${suffixRight}`;
-      } else if (prefixRight || (suffixRight && suffixRight !== "_right")) {
-        targetKey = `${prefixRight}${k}${suffixRight}`;
+        let targetKey = k;
+        if ((leftRow && k in leftRow) || hasRightDecoration) {
+          targetKey = `${prefixRight}${k}${suffixRight}`;
+        }
+        result[targetKey] = rightRow[k];
       }
-      result[targetKey] = v;
-    }
-  } else if (sampleRightCols) {
-    for (const col of sampleRightCols) {
-      const rightKeyIdx = joinKeys.right.indexOf(col);
-      if (rightKeyIdx >= 0) continue;
-      let targetKey = col;
-      if (leftRow && col in leftRow) {
-        targetKey = `${prefixRight}${col}${suffixRight}`;
-      } else if (prefixRight || (suffixRight && suffixRight !== "_right")) {
-        targetKey = `${prefixRight}${col}${suffixRight}`;
+    } else if (sampleRightCols) {
+      for (let i = 0; i < sampleRightCols.length; i++) {
+        const col = sampleRightCols[i]!;
+        if (rightKeyMap.has(col)) continue;
+        let targetKey = col;
+        if ((leftRow && col in leftRow) || hasRightDecoration) {
+          targetKey = `${prefixRight}${col}${suffixRight}`;
+        }
+        result[targetKey] = null;
       }
-      result[targetKey] = null;
     }
-  }
 
-  return result;
+    return result;
+  };
 }
 
 /**
@@ -137,17 +166,27 @@ export async function* joinStreams(
   const rightStream: DataStream = "read" in rightSource ? rightSource.read({ batchSize: effectiveBatchSize }) : rightSource;
   const leftStream: DataStream = "read" in leftSource ? leftSource.read({ batchSize: effectiveBatchSize }) : leftSource;
 
+  const getRightKey = createRowKeyExtractor(keys.right);
+  const getLeftKey = createRowKeyExtractor(keys.left);
+  const mergeRows = createRowMerger(keys, options);
+
   let rightSampleCols: string[] = [];
   let leftSampleCols: string[] = [];
 
   try {
     // 1. Build Phase: Ingest right dataset into SpillableJoinIndex
     for await (const batch of rightStream) {
-      for (const row of batch.rows) {
+      const rows = batch.rows;
+      const len = rows.length;
+      for (let i = 0; i < len; i++) {
+        const row = rows[i]!;
         if (rightSampleCols.length === 0) {
           rightSampleCols = Object.keys(row);
         }
-        const key = getRowKey(row, keys.right);
+        const key = getRightKey(row);
+        if (rightIndex.setSync && rightIndex.setSync(key, row)) {
+          continue;
+        }
         await rightIndex.set(key, row);
       }
     }
@@ -157,32 +196,44 @@ export async function* joinStreams(
     let globalOffset = 0;
 
     for await (const batch of leftStream) {
-      for (const leftRow of batch.rows) {
+      const rows = batch.rows;
+      const len = rows.length;
+      for (let i = 0; i < len; i++) {
+        const leftRow = rows[i]!;
         if (leftSampleCols.length === 0) {
           leftSampleCols = Object.keys(leftRow);
         }
-        const key = getRowKey(leftRow, keys.left);
+        const key = getLeftKey(leftRow);
 
         if (joinType === "semi") {
-          const exists = await rightIndex.has(key);
+          let exists = rightIndex.hasSync ? rightIndex.hasSync(key) : undefined;
+          if (exists === undefined) {
+            exists = await rightIndex.has(key);
+          }
           if (exists) {
             currentBatch.push(leftRow);
           }
         } else if (joinType === "anti") {
-          const exists = await rightIndex.has(key);
+          let exists = rightIndex.hasSync ? rightIndex.hasSync(key) : undefined;
+          if (exists === undefined) {
+            exists = await rightIndex.has(key);
+          }
           if (!exists) {
             currentBatch.push(leftRow);
           }
         } else {
-          const matchedRightRows = await rightIndex.get(key);
+          let matchedRightRows = rightIndex.getSync ? rightIndex.getSync(key) : undefined;
+          if (matchedRightRows === undefined) {
+            matchedRightRows = await rightIndex.get(key);
+          }
           if (matchedRightRows && matchedRightRows.length > 0) {
             rightIndex.markMatched(key);
-            for (const rightRow of matchedRightRows) {
-              const merged = mergeRows(leftRow, rightRow, keys, options, leftSampleCols, rightSampleCols);
+            for (let m = 0; m < matchedRightRows.length; m++) {
+              const merged = mergeRows(leftRow, matchedRightRows[m]!, leftSampleCols, rightSampleCols);
               currentBatch.push(merged);
             }
           } else if (joinType === "left" || joinType === "full") {
-            const merged = mergeRows(leftRow, null, keys, options, leftSampleCols, rightSampleCols);
+            const merged = mergeRows(leftRow, null, leftSampleCols, rightSampleCols);
             currentBatch.push(merged);
           }
         }
@@ -201,7 +252,7 @@ export async function* joinStreams(
     // 3. Post-Probe Phase: For right and full outer joins, emit unmatched right rows
     if (joinType === "right" || joinType === "full") {
       for await (const unmatchedRightRow of rightIndex.getUnmatched()) {
-        const merged = mergeRows(null, unmatchedRightRow, keys, options, leftSampleCols, rightSampleCols);
+        const merged = mergeRows(null, unmatchedRightRow, leftSampleCols, rightSampleCols);
         currentBatch.push(merged);
 
         if (currentBatch.length >= effectiveBatchSize) {

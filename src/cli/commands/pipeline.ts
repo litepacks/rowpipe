@@ -3,6 +3,7 @@ import { parseSortSpecs, type SortKeySpec } from "../../transforms/sort/comparat
 import { executePlannedPipeline, optimizePipeline, PipelineOperation, PlannedPipeline } from "../../planner/index.js";
 import { createReader, inferFormatFromPath as inferReaderFormat, isGlobPattern } from "../../readers/index.js";
 import { createWriter, inferFormatFromPath as inferWriterFormat } from "../../writers/index.js";
+import { formatTable } from "../../writers/table.js";
 import { openReadableStream, openWritableStream } from "../../utils/compression.js";
 import { logMemoryDebug } from "../../utils/formatting.js";
 import { ProgressReporter } from "../../utils/progress.js";
@@ -63,7 +64,8 @@ export interface UnifiedPipelineCliOptions {
   upsert?: boolean;
   conflict?: string;
   truncate?: boolean;
-  dryRun?: boolean;
+  dryRun?: boolean | string | number;
+  preview?: boolean | string | number;
   quiet?: boolean;
   noProgress?: boolean;
   onError?: "abort" | "skip" | "log" | "fail";
@@ -319,6 +321,67 @@ export async function unifiedPipelineCommand(
     ? options.conflict.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
+  const isDryRun = Boolean(
+    (options.dryRun !== undefined && options.dryRun !== false) ||
+    (options.preview !== undefined && options.preview !== false)
+  );
+
+  if (isDryRun && !options.toDb) {
+    const rawCount = options.preview ?? options.dryRun;
+    const previewCount =
+      typeof rawCount === "number" && rawCount > 0
+        ? rawCount
+        : typeof rawCount === "string" && !Number.isNaN(Number(rawCount)) && Number(rawCount) > 0
+          ? Number(rawCount)
+          : 5;
+
+    const pipeline = executePlannedPipeline(reader, plan, { batchSize: effectiveBatchSize });
+    const previewResult = await pipeline.dryRun(previewCount);
+
+    if (options.json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            dryRun: true,
+            source: { path: inputPath, format: fromFormat },
+            target: { path: options.output || "-", format: toFormat },
+            plan: {
+              operations: plan.operations.map((op) => op.type),
+            },
+            previewCount: previewResult.totalSampled,
+            columns: previewResult.columns,
+            types: previewResult.types,
+            rows: previewResult.rows,
+          },
+          null,
+          2
+        ) + "\n"
+      );
+      return;
+    }
+
+    process.stdout.write(`\n🔍 Pipeline Dry Run / Preview:\n`);
+    process.stdout.write(`  Source: ${inputPath} (format: ${fromFormat})\n`);
+    process.stdout.write(`  Target: ${options.output || "stdout"} (format: ${toFormat})\n`);
+    process.stdout.write(
+      `  Operations (${plan.operations.length}): ${plan.operations.map((o) => o.type).join(" -> ") || "none"}\n`
+    );
+    process.stdout.write(`  Sampled Rows: ${previewResult.totalSampled}\n\n`);
+
+    if (previewResult.rows.length > 0) {
+      process.stdout.write(formatTable(previewResult.rows));
+      process.stdout.write(`\nInferred Column Types:\n`);
+      for (const [col, colType] of Object.entries(previewResult.types)) {
+        process.stdout.write(`  • ${col}: ${colType}\n`);
+      }
+    } else {
+      process.stdout.write(`  (empty dataset - 0 rows emitted)\n`);
+    }
+
+    process.stdout.write(`\n(No data was written - dry-run mode active)\n\n`);
+    return;
+  }
+
   const targetWriter = options.toDb
     ? createWriter(options.toDb, {
         table: options.toTable || options.table || "output",
@@ -327,6 +390,7 @@ export async function unifiedPipelineCommand(
         upsert: options.upsert,
         conflictColumns: conflictCols,
         truncate: options.truncate,
+        dryRun: options.dryRun ? true : undefined,
       })
     : createWriter(options.output || "-", {
         format: toFormat,

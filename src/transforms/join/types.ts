@@ -29,4 +29,7 @@ export interface JoinIndex {
   getUnmatched(): AsyncIterable<Row>;
   count(): number;
   close(): Promise<void>;
+  setSync?(key: string, row: Row): boolean;
+  getSync?(key: string): Row[] | undefined;
+  hasSync?(key: string): boolean | undefined;
 }

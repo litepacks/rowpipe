@@ -83,6 +83,7 @@ import { serveCommand } from "./commands/serve.js";
 import { reportCommand } from "./commands/report.js";
 import { fetchCommand } from "./commands/fetch.js";
 import { mcpCommand } from "./commands/mcp.js";
+import { formatsCommand } from "./commands/formats.js";
 
 // Handle broken pipe gracefully when piping to head/less
 process.stdout.on("error", (err: unknown) => {
@@ -169,6 +170,8 @@ program.hook("preAction", (thisCommand, actionCommand) => {
         "completion",
         "version",
         "fetch",
+        "formats",
+        "mcp",
       ]);
       if (!nonStreamCommands.has(actionCommand.name())) {
         if (!firstArg || firstArg === "-") {
@@ -214,9 +217,12 @@ program
   .option("--ignore-case", "Case-insensitive string sorting/comparison")
   .option("--natural", "Natural numeric sorting for alphanumeric strings")
   .option("--memory-limit <size>", "Memory limit before spilling to disk (e.g. 256mb, 64mb)", "256mb")
-  .option("--temp-dir <dir>", "Custom temporary directory for disk spills")
-  .option("--from <format>", "Input format (csv, tsv, psv, json, jsonl, xlsx, parquet)")
-  .option("--to <format>", "Output format (csv, tsv, psv, json, jsonl, xlsx, parquet, markdown)")
+  .option("--from <format>", "Input format (csv, tsv, psv, json, jsonl, ndjson, xlsx, parquet, arrow, feather, avro, xml)")
+  .option("--to <format>", "Output format (csv, tsv, psv, json, jsonl, ndjson, xlsx, parquet, arrow, feather, avro, xml, markdown)")
+  .option("--path <path>", "Nested path for XML or JSON array")
+  .option("--xml-root <tag>", "Root element tag for XML output")
+  .option("--xml-row <tag>", "Row element tag for XML output")
+  .option("--attr-prefix <prefix>", "Attribute prefix for XML reader")
   .option("--sheet <sheet>", "Worksheet name or index for XLSX")
   .option("--delimiter <delim>", "Custom CSV/TSV delimiter")
   .option("--json", "Output machine-readable JSON")
@@ -235,7 +241,8 @@ program
   .option("--transaction", "Wrap database writes in transactions", true)
   .option("--no-transaction", "Disable transactions for database writes")
   .option("--truncate", "Truncate target table before writing (destructive)")
-  .option("--dry-run", "Print generated DDL/SQL without executing")
+  .option("--dry-run [rows]", "Preview pipeline execution without writing to target (or print DDL/SQL for databases)")
+  .option("--preview [rows]", "Preview transformed rows without writing to target")
   .option("--quiet", "Suppress non-data output and progress")
   .option("--no-progress", "Disable real-time progress bar")
   .option("--on-error <strategy>", "Error handling strategy: abort (default), skip, or log", "abort")
@@ -258,6 +265,7 @@ program
 program
   .command("inspect [input]")
   .description("Inspect format, row count, columns, and sheet summary")
+  .option("--from <format>", "Input format")
   .option("--sheet <sheet>", "Target worksheet name or index for XLSX")
   .option("--path <path>", "Nested object path for JSON (e.g. data.results)")
   .option("--delimiter <delim>", "Custom CSV/TSV delimiter")
@@ -271,8 +279,8 @@ program
 program
   .command("convert [input] [output]")
   .description("Stream convert tabular datasets across formats")
-  .option("--from <format>", "Input format (csv, tsv, psv, json, jsonl, xlsx, parquet)")
-  .option("--to <format>", "Output format (csv, tsv, psv, json, jsonl, xlsx, parquet, markdown)")
+  .option("--from <format>", "Input format (csv, tsv, psv, json, jsonl, ndjson, xlsx, parquet, arrow, feather, avro, xml)")
+  .option("--to <format>", "Output format (csv, tsv, psv, json, jsonl, ndjson, xlsx, parquet, arrow, feather, avro, xml, markdown)")
   .option("--gzip", "Use GZIP compression")
   .option("--brotli", "Use Brotli compression")
   .option("--zstd", "Use Zstandard compression")
@@ -280,9 +288,14 @@ program
   .option("--sheet <sheet>", "Worksheet name or index for XLSX")
   .option("--all-sheets", "Export all worksheets in the workbook to individual files")
   .option("--out-dir <dir>", "Output directory for --all-sheets export")
-  .option("--path <path>", "Nested path for JSON array")
+  .option("--path <path>", "Nested path for XML or JSON array")
+  .option("--xml-root <tag>", "Root element tag for XML output")
+  .option("--xml-row <tag>", "Row element tag for XML output")
+  .option("--attr-prefix <prefix>", "Attribute prefix for XML reader")
   .option("--delimiter <delim>", "Custom CSV delimiter")
   .option("--no-header", "Disable writing or reading headers in CSV")
+  .option("--dry-run [rows]", "Preview conversion and inferred schema without writing output file (default: 5 rows)")
+  .option("--preview [rows]", "Preview conversion and inferred schema without writing output file (alias for --dry-run)")
   .option("--on-error <strategy>", "Error handling strategy: abort (default), skip, or log")
   .option("--bad-rows-log <file>", "Write malformed or rejected rows to dead-letter log file")
   .action(async (input = "-", output, cmdOptions) => {
@@ -1161,7 +1174,8 @@ program
 // 37. completion
 program
   .command("completion [shell]")
-  .description("Generate shell autocompletion script (zsh, bash, fish)")
+  .description("Generate or install shell autocompletion script (zsh, bash, fish)")
+  .option("--install", "Automatically install completion script into user shell profile (~/.zshrc, ~/.bashrc, or config.fish)")
   .action(async (shell = "zsh", cmdOptions) => {
     const opts = { ...program.opts(), ...cmdOptions };
     await completionCommand(shell, opts);
@@ -1717,6 +1731,18 @@ program
   .allowUnknownOption(true)
   .action(async (args) => {
     await mcpCommand(args || []);
+  });
+
+// 66. formats
+program
+  .command("formats")
+  .description("List supported tabular and database formats with their streaming and compression capabilities")
+  .option("--json", "Output format capabilities matrix as JSON")
+  .option("--markdown", "Output format capabilities matrix as Markdown table")
+  .option("--category <name>", "Filter by category: Columnar, Binary, Text, Database, Presentation")
+  .action(async (cmdOptions) => {
+    const opts = { ...program.opts(), ...cmdOptions };
+    await formatsCommand(opts);
   });
 
 async function main() {

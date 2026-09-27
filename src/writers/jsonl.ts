@@ -29,13 +29,20 @@ export class JSONLWriter implements TabularWriter {
     const outStream = this.getOutputStream(options);
 
     for await (const batch of dataStream) {
-      let chunkText = "";
-      for (const row of batch.rows) {
-        chunkText += safeJsonStringify(row) + "\n";
+      const rows = batch.rows;
+      const bLen = rows.length;
+      if (bLen === 0) continue;
+
+      const lines = new Array<string>(bLen);
+      for (let i = 0; i < bLen; i++) {
+        const row = rows[i]!;
+        try {
+          lines[i] = JSON.stringify(row);
+        } catch {
+          lines[i] = safeJsonStringify(row);
+        }
       }
-      if (chunkText.length > 0) {
-        await this.writeChunk(outStream, chunkText);
-      }
+      await this.writeChunk(outStream, lines.join("\n") + "\n");
     }
   }
 
@@ -46,3 +53,6 @@ export class JSONLWriter implements TabularWriter {
     }
   }
 }
+
+export const NDJSONWriter = JSONLWriter;
+

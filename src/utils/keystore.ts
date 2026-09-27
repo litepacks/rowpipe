@@ -10,17 +10,19 @@ export interface KeyStore {
   count(): number;
   close(): Promise<void>;
   getSpillStats?(): { isSpilled: boolean; spilledBytes: number; entryCount: number };
+  hasSync?(key: string): boolean | null;
+  addSync?(key: string): boolean | null;
 }
 
 export class MemoryKeyStore implements KeyStore {
   private set = new Set<string>();
   private estimatedBytes = 0;
 
-  async has(key: string): Promise<boolean> {
+  hasSync(key: string): boolean {
     return this.set.has(key);
   }
 
-  async add(key: string): Promise<boolean> {
+  addSync(key: string): boolean {
     if (this.set.has(key)) {
       return false;
     }
@@ -29,12 +31,24 @@ export class MemoryKeyStore implements KeyStore {
     return true;
   }
 
-  async delete(key: string): Promise<boolean> {
+  deleteSync(key: string): boolean {
     if (this.set.delete(key)) {
       this.estimatedBytes = Math.max(0, this.estimatedBytes - (key.length * 2 + 16));
       return true;
     }
     return false;
+  }
+
+  async has(key: string): Promise<boolean> {
+    return this.hasSync(key);
+  }
+
+  async add(key: string): Promise<boolean> {
+    return this.addSync(key);
+  }
+
+  async delete(key: string): Promise<boolean> {
+    return this.deleteSync(key);
   }
 
   count(): number {
@@ -209,11 +223,36 @@ export class SpillableKeyStore implements KeyStore {
     this.isSpilled = true;
   }
 
+  hasSync(key: string): boolean | null {
+    if (this.isSpilled) {
+      return null;
+    }
+    return this.memoryStore.hasSync(key);
+  }
+
+  addSync(key: string): boolean | null {
+    if (this.isSpilled) {
+      return null;
+    }
+
+    if (this.memoryStore.hasSync(key)) {
+      return false;
+    }
+
+    const nextEstimated = this.memoryStore.getEstimatedBytes() + key.length * 2 + 16;
+    if (nextEstimated >= this.memoryLimitBytes) {
+      return null;
+    }
+
+    this.memoryStore.addSync(key);
+    return true;
+  }
+
   async has(key: string): Promise<boolean> {
     if (this.isSpilled && this.diskStore) {
       return this.diskStore.has(key);
     }
-    return this.memoryStore.has(key);
+    return this.memoryStore.hasSync(key);
   }
 
   async add(key: string): Promise<boolean> {
@@ -221,18 +260,22 @@ export class SpillableKeyStore implements KeyStore {
       return this.diskStore.add(key);
     }
 
-    const added = await this.memoryStore.add(key);
+    if (this.memoryStore.hasSync(key)) {
+      return false;
+    }
+
+    this.memoryStore.addSync(key);
     if (this.memoryStore.getEstimatedBytes() >= this.memoryLimitBytes) {
       await this.spillToDisk();
     }
-    return added;
+    return true;
   }
 
   async delete(key: string): Promise<boolean> {
     if (this.isSpilled && this.diskStore) {
       return this.diskStore.delete(key);
     }
-    return this.memoryStore.delete(key);
+    return this.memoryStore.deleteSync(key);
   }
 
   count(): number {

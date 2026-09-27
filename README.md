@@ -1,10 +1,10 @@
 # Rowpipe
 
-> **A stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown.**
+> **A stream-first tabular data toolkit for CSV, TSV, JSON, JSONL, NDJSON, XLSX, Apache Parquet, Apache Arrow / Feather, Apache Avro, XML, and Markdown.**
 >
 > *Don't load the dataset. Stream through it.*
 
-Rowpipe is a high-performance, bounded-memory command-line toolkit and Node.js library for reading, inspecting, analyzing, transforming, validating, and converting tabular datasets across CSV, TSV, PSV, JSON, JSONL, XLSX, Apache Parquet (`.parquet`), Markdown tables (`.md`), and transparent Gzip (`.gz`) streams.
+Rowpipe is a high-performance, bounded-memory command-line toolkit and Node.js library for reading, inspecting, analyzing, transforming, validating, and converting tabular datasets across CSV, TSV, PSV, JSON, JSONL, NDJSON, XLSX, Apache Parquet (`.parquet`), Apache Arrow IPC / Feather (`.arrow`, `.feather`), Apache Avro (`.avro`), XML (`.xml`), Markdown tables (`.md`), and transparent Gzip (`.gz`) streams.
 
 Designed around stream backpressure and batch processing, Rowpipe processes multi-gigabyte and multi-million-row datasets with constant $O(1)$ memory usage.
 
@@ -13,7 +13,10 @@ Designed around stream backpressure and batch processing, Rowpipe processes mult
 ## Highlights
 
 - **Stream-First Architecture**: Datasets are never buffered entirely in memory; rows flow in configurable batches through async generator pipelines.
-- **Rich Format Ecosystem**: Native streaming support for **PostgreSQL, MySQL, SQLite, CSV, TSV / PSV, JSON, JSONL, XLSX, Apache Parquet (`.parquet`), Markdown tables (`.md`), and Gzip (`.gz`)**.
+- **Rich Format Ecosystem**: Native streaming support for **PostgreSQL, MySQL, SQLite, CSV, TSV / PSV, JSON, JSONL, NDJSON, XLSX, Apache Parquet (`.parquet`), Apache Arrow IPC / Feather (`.arrow`, `.feather`), Apache Avro (`.avro`), XML (`.xml`), Markdown tables (`.md`), and Gzip (`.gz`)**.
+- **Apache Arrow IPC & Feather Columnar Streaming**: Stream Arrow RecordBatches directly across `.arrow` and `.feather` files with zero native C++ compilation dependencies.
+- **Apache Avro Container Streaming**: Read and write Avro Object Container Files (`.avro`) block-by-block with automatic schema inference, nullable union types `["null", type]`, and detailed schema error reporting.
+- **Streaming SAX XML Engine**: Event-driven XML parsing and incremental generation with configurable repeating record paths (`--path`), dot/XPath notation, attribute handling (`@attr`), and flattening (`--flatten`).
 - **First-Class Database Streaming (`rowpipe db`)**: True cursor-based streaming sources and sinks for PostgreSQL, MySQL, and SQLite. "Databases are just another Rowpipe source and sink" — rows normalize directly into standard `DataBatch` objects with zero parallel data models.
 - **Intelligent Pushdown Optimizer**: Automatically pushes compatible operations (`SELECT`, `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`) down into database queries in `--table` mode while seamlessly executing non-pushdownable transforms in the local streaming pipeline.
 - **Database Writing, Migration & DDL**: Stream directly into database tables (`--to-db`) with automatic table creation (`--create-table`), batched inserts, transactions (`--transaction`), dialect-specific upsert (`--upsert --conflict <cols>`), and truncate (`--truncate`).
@@ -200,7 +203,22 @@ console.log(result.data);
 
 ## CLI Usage & Examples
 
-### 1. Inspect Dataset & Multi-Sheet Excel / Parquet Analysis
+### 1. Format Discovery & Capabilities Matrix (`rowpipe formats`)
+Inspect all 16 supported tabular, binary, columnar, and database formats with their streaming and compression capabilities:
+
+```bash
+# Pretty Unicode terminal table of all formats
+rowpipe formats
+
+# Output as machine-readable JSON or Markdown table
+rowpipe formats --json
+rowpipe formats --markdown
+
+# Filter by format category (Columnar, Binary, Text, Database, Presentation)
+rowpipe formats --category Columnar
+```
+
+### 2. Inspect Dataset & Multi-Sheet Excel / Parquet Analysis
 Inspect format, row count, column list, data types, null percentage, and approximate distinct counts:
 
 ```bash
@@ -225,14 +243,31 @@ rowpipe inspect workbook.xlsx --sheet Users
 Convert across formats without intermediate buffering:
 
 ```bash
-# CSV / TSV to Apache Parquet
+# CSV / TSV to Apache Parquet, Arrow, or Avro
 rowpipe convert sales.csv sales.parquet
+rowpipe convert sales.csv sales.arrow
+rowpipe convert sales.csv sales.avro
 
-# Parquet to Gzipped JSONL
+# Columnar Arrow IPC / Feather to Parquet or CSV
+rowpipe convert data.arrow data.parquet
+rowpipe convert data.feather data.csv
+
+# JSONL / NDJSON to Avro and back
+rowpipe convert events.ndjson events.avro
+rowpipe convert events.avro events.jsonl
+
+# Streaming XML parsing with repeating record paths
+rowpipe convert products.xml products.csv --path products.product
+rowpipe convert catalog.xml catalog.parquet --path /catalog/items/item --flatten
+
+# Incremental XML generation
+rowpipe convert products.csv products.xml --xml-root products --xml-row product
+
+# Parquet to Gzipped JSONL / NDJSON
 rowpipe convert sales.parquet sales.jsonl.gz
 
 # Filter and output directly as a GitHub Markdown Table
-rowpipe filter dataset.parquet "status == 'ACTIVE' && score >= 90" --to markdown
+rowpipe filter dataset.arrow "status == 'ACTIVE' && score >= 90" --to markdown
 
 # Export specific Excel worksheet to CSV / TSV
 rowpipe convert workbook.xlsx users.tsv --sheet Users
@@ -241,7 +276,8 @@ rowpipe convert workbook.xlsx users.tsv --sheet Users
 rowpipe convert workbook.xlsx --all-sheets --out-dir ./exported/ --to csv
 
 # Streaming through gzip
-rowpipe convert data.csv.gz data.jsonl.gz
+rowpipe convert data.csv.gz data.arrow.gz
+rowpipe convert data.xml.gz data.ndjson.gz
 ```
 
 ### 3. Streaming Statistics
@@ -454,6 +490,77 @@ cat transactions.csv |
   rowpipe reduce - "total_profit=sum(profit)" "avg_margin=avg(margin)" "count=count()" --by country |
   rowpipe convert - --to jsonl > profitable_countries.jsonl
 ```
+
+---
+
+## Supported Formats & Streaming Architecture
+
+Rowpipe provides a unified stream abstraction where every format maps directly into standard `DataBatch` records. Large files are streamed in chunks without full in-memory buffering.
+
+| Format | Extensions | Read Streaming | Write Streaming | Schema Support | Nested Objects | Compression (`.gz`, `.zst`, `.br`) |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| **CSV / TSV / PSV** | `.csv`, `.tsv`, `.psv`, `.txt`, `.tab` | Yes | Yes | Inferred | Delimited / JSON | Yes |
+| **JSON** | `.json` | Yes | Yes | Inferred | Yes | Yes |
+| **JSONL / NDJSON** | `.jsonl`, `.ndjson`, `.ldjson` | Yes | Yes | Inferred | Yes | Yes |
+| **Apache Parquet** | `.parquet`, `.pq` | Yes | Yes | Native | Inferred / JSON | Built-in + Stream |
+| **Apache Arrow IPC** | `.arrow` | Yes (RecordBatches) | Yes (RecordBatches) | Native | Struct / List | Yes |
+| **Feather** | `.feather` | Yes (RecordBatches) | Yes (RecordBatches) | Native | Struct / List | Yes |
+| **Apache Avro** | `.avro` | Yes (OCF Blocks) | Yes (OCF Blocks) | Native (Schema) | Yes | Yes |
+| **XML** | `.xml` | Yes (SAX Evented) | Yes (Incremental) | Inferred | Yes (`--flatten`) | Yes |
+| **Excel (XLSX)** | `.xlsx` | Yes (Sheet-by-Sheet) | Yes | Inferred | Stringified | No (ZIP format) |
+| **Markdown Tables** | `.md` | N/A | Yes | N/A | Stringified | Yes |
+| **Databases** | `postgres://`, `mysql://`, `sqlite://` | Yes (Cursor) | Yes (Batch/Upsert) | Native (SQL) | JSONB / Text | N/A |
+
+### 1. NDJSON (Newline Delimited JSON)
+- **Zero-duplication Alias**: Fully shares the battle-tested, high-throughput `JSONLReader` and `JSONLWriter` implementations.
+- **Extensions**: Automatically recognizes `.ndjson`, `.jsonl`, and `.ldjson` (including compressed variants like `.ndjson.gz`).
+- **CLI Options**: Explicit `--from ndjson` and `--to ndjson` options are first-class aliases of `jsonl`.
+
+### 2. Apache Arrow IPC & Feather
+- **Pure JavaScript / TypeScript**: Powered by `apache-arrow` (`^21.2.0`) with zero native C++ compilation bindings.
+- **Columnar Streaming**: Translates Arrow `RecordBatch` instances directly to and from Rowpipe row batches with bounded memory.
+- **Feather v2 Equivalence**: Feather v2 is the on-disk Arrow IPC File format; both `.arrow` and `.feather` share the identical columnar reader and writer.
+- **Rich Type Fidelity**: Maps Arrow's complete DataType hierarchy into Rowpipe's internal type system:
+  - 8/16/32-bit Integers $\rightarrow$ `integer`
+  - 64-bit Integers $\rightarrow$ `bigint`
+  - Floats & Doubles $\rightarrow$ `number`
+  - Booleans $\rightarrow$ `boolean`
+  - Strings & Utf8 $\rightarrow$ `string`
+  - Dates & Timestamps $\rightarrow$ `date` / `datetime`
+  - Binaries $\rightarrow$ `binary`
+  - Structs, Lists, and Dictionaries $\rightarrow$ `json`
+- **File vs Stream IPC**: Automatically uses `RecordBatchFileWriter` for files (enabling random-access metadata) and `RecordBatchStreamWriter` for Unix standard streams (`stdout` / pipes).
+
+### 3. Apache Avro
+- **Object Container Files (OCF)**: Implements streaming reading and writing of Avro binary container files with block-level decompression.
+- **Schemaless Schema Inference**: When converting schemaless inputs (such as CSV or JSONL) to Avro, Rowpipe inspects the initial batch to infer a compatible Avro record schema using nullable unions (`["null", type]`), allowing conversion to begin immediately without buffering the entire input.
+- **Actionable Error Diagnostics**: Detailed validation error reporting identifies the exact record index, field name, expected Avro schema type, and received value/type.
+- **Complex Types**: Supports `record`, `array`, `map`, `bytes`, and logical timestamp types (`timestamp-millis`).
+
+### 4. Streaming XML
+- **SAX Event-Driven Architecture**: Powered by a streaming SAX parser (`sax`) that emits rows upon closing tags without constructing an in-memory Document Object Model (DOM). Memory usage is strictly bounded to the size of a single record.
+- **Configurable Record Path (`--path`)**: Specify the repeating element using dot notation or XPath syntax:
+  ```bash
+  rowpipe convert data.xml data.csv --path catalog.product
+  rowpipe convert data.xml data.csv --path /catalog/product
+  rowpipe convert data.xml data.csv --path product
+  ```
+  If `--path` is omitted, Rowpipe automatically treats immediate children of the root element (depth 2) as records.
+- **Attributes & Prefixes**: Element attributes are extracted as row fields with a configurable prefix (defaults to `@id`, `@active`):
+  ```bash
+  rowpipe convert data.xml data.jsonl --attr-prefix "@"
+  ```
+- **Nested Preservation & Flattening (`--flatten`)**: Nested sub-elements are preserved as nested objects by default, or flattened into dot-notated columns when `--flatten` is supplied:
+  ```bash
+  rowpipe convert data.xml data.csv --path catalog.item --flatten
+  ```
+- **Repeated Elements & CDATA**: Sibling elements with matching tags automatically map to arrays (e.g. `<tag>a</tag><tag>b</tag>` $\rightarrow$ `["a", "b"]`), and CDATA blocks and XML entities (`&amp;`, `&lt;`, `&gt;`) are unescaped seamlessly.
+- **Incremental XML Writer**: Streams `<rows><row>...</row></rows>` incrementally with custom root and row tags (`--xml-root <name>`, `--xml-row <name>`) and proper entity escaping.
+
+### Explicit Limitations & Design Notes
+1. **XML Repeated Elements**: In strict tabular outputs like CSV, repeated sibling XML elements that become arrays are stringified as JSON arrays unless unnested via `rowpipe explode`.
+2. **Arrow Record Batching**: Arrow IPC requires complete columnar vectors per batch; Rowpipe constructs batches in bounded chunks (default 1,000–5,000 rows) so peak memory scales with batch size, not dataset size.
+3. **Avro Dynamic Unions**: Schemaless Avro writer inference establishes the schema from the initial sample batch; rows with new previously-unseen columns in later batches will be omitted or validated against the compiled record schema.
 
 ---
 

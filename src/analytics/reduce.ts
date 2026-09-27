@@ -93,7 +93,7 @@ class SumAccumulator implements Accumulator {
   add(val: unknown): void {
     if (val === null || val === undefined || val === "") return;
     const num = typeof val === "number" ? val : Number(val);
-    if (!Number.isNaN(num)) {
+    if (num === num) {
       this.sum += num;
     }
   }
@@ -108,7 +108,7 @@ class AvgAccumulator implements Accumulator {
   add(val: unknown): void {
     if (val === null || val === undefined || val === "") return;
     const num = typeof val === "number" ? val : Number(val);
-    if (!Number.isNaN(num)) {
+    if (num === num) {
       this.sum += num;
       this.count++;
     }
@@ -123,7 +123,7 @@ class MinAccumulator implements Accumulator {
   add(val: unknown): void {
     if (val === null || val === undefined || val === "") return;
     const num = typeof val === "number" ? val : Number(val);
-    if (!Number.isNaN(num)) {
+    if (num === num) {
       if (this.min === null || num < this.min) this.min = num;
     }
   }
@@ -137,7 +137,7 @@ class MaxAccumulator implements Accumulator {
   add(val: unknown): void {
     if (val === null || val === undefined || val === "") return;
     const num = typeof val === "number" ? val : Number(val);
-    if (!Number.isNaN(num)) {
+    if (num === num) {
       if (this.max === null || num > this.max) this.max = num;
     }
   }
@@ -189,7 +189,7 @@ class WelfordAccumulator implements Accumulator {
   add(val: unknown): void {
     if (val === null || val === undefined || val === "") return;
     const num = typeof val === "number" ? val : Number(val);
-    if (Number.isNaN(num)) return;
+    if (num !== num) return;
 
     this.count++;
     const delta = num - this.mean;
@@ -260,6 +260,7 @@ function createAccumulatorFor(func: AggregationFunction, hasSource: boolean): Ac
 interface CompiledAggregation {
   targetField: string;
   func: AggregationFunction;
+  directCol?: string;
   evaluator?: (row: Row) => unknown;
   createAccumulator: () => Accumulator;
 }
@@ -274,65 +275,239 @@ export interface ReduceOptions {
  */
 export class ReduceAggregator implements Aggregator<Row[]> {
   private byCols: string[];
+  private byColsCount: number;
+  private col0?: string;
+  private col1?: string;
   private compiled: CompiledAggregation[];
+  private compiledCount: number;
   private globalAccs?: Accumulator[];
   private groupMap?: Map<string, { groupValues: Record<string, unknown>; accs: Accumulator[] }>;
 
   constructor(options: ReduceOptions) {
     this.byCols = options.by && options.by.length > 0 ? options.by : [];
+    this.byColsCount = this.byCols.length;
+    if (this.byColsCount === 1) {
+      this.col0 = this.byCols[0];
+    } else if (this.byColsCount === 2) {
+      this.col0 = this.byCols[0];
+      this.col1 = this.byCols[1];
+    }
 
     const rawSpecs: AggregationSpec[] =
       typeof options.aggregations[0] === "string"
         ? parseReduceSpecs(options.aggregations as string[])
         : (options.aggregations as AggregationSpec[]);
 
-    this.compiled = rawSpecs.map((spec) => ({
-      targetField: spec.targetField,
-      func: spec.func,
-      evaluator: spec.sourceExpr ? compileValueExpression(spec.sourceExpr) : undefined,
-      createAccumulator: () => createAccumulatorFor(spec.func, Boolean(spec.sourceExpr)),
-    }));
+    this.compiled = rawSpecs.map((spec) => {
+      let directCol: string | undefined = undefined;
+      let evaluator: ((row: Row) => unknown) | undefined = undefined;
 
-    if (this.byCols.length === 0) {
+      if (spec.sourceExpr) {
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(spec.sourceExpr)) {
+          directCol = spec.sourceExpr;
+        } else {
+          evaluator = compileValueExpression(spec.sourceExpr);
+        }
+      }
+
+      return {
+        targetField: spec.targetField,
+        func: spec.func,
+        directCol,
+        evaluator,
+        createAccumulator: () => createAccumulatorFor(spec.func, Boolean(spec.sourceExpr)),
+      };
+    });
+    this.compiledCount = this.compiled.length;
+
+    if (this.byColsCount === 0) {
       this.globalAccs = this.compiled.map((c) => c.createAccumulator());
     } else {
       this.groupMap = new Map();
     }
   }
 
+  private createGroupAccumulators(): Accumulator[] {
+    const accs = new Array<Accumulator>(this.compiledCount);
+    for (let i = 0; i < this.compiledCount; i++) {
+      accs[i] = this.compiled[i]!.createAccumulator();
+    }
+    return accs;
+  }
+
   add(row: Row): void {
     if (this.globalAccs) {
-      // Global reduction
-      for (let i = 0; i < this.compiled.length; i++) {
-        const item = this.compiled[i]!;
-        const val = item.evaluator ? item.evaluator(row) : null;
-        this.globalAccs[i]!.add(val);
+      const globalAccs = this.globalAccs;
+      const compiled = this.compiled;
+      const numCompiled = this.compiledCount;
+      for (let i = 0; i < numCompiled; i++) {
+        const item = compiled[i]!;
+        const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+        globalAccs[i]!.add(val);
       }
-    } else if (this.groupMap) {
-      // Group-by reduction
-      let key = "";
-      const groupValues: Record<string, unknown> = {};
+      return;
+    }
 
-      for (let i = 0; i < this.byCols.length; i++) {
-        const col = this.byCols[i]!;
-        const val = row[col] ?? null;
-        groupValues[col] = val;
-        key += (i > 0 ? "\x1f" : "") + String(val ?? "");
+    if (this.groupMap) {
+      let key: string;
+      const byColsCount = this.byColsCount;
+      if (byColsCount === 1) {
+        const v0 = row[this.col0!] as unknown;
+        key = v0 === null || v0 === undefined ? "" : (typeof v0 === "string" ? v0 : String(v0));
+      } else if (byColsCount === 2) {
+        const v0 = row[this.col0!] as unknown;
+        const v1 = row[this.col1!] as unknown;
+        const s0 = v0 === null || v0 === undefined ? "" : (typeof v0 === "string" ? v0 : String(v0));
+        const s1 = v1 === null || v1 === undefined ? "" : (typeof v1 === "string" ? v1 : String(v1));
+        key = s0 + "\x1f" + s1;
+      } else {
+        key = "";
+        const byCols = this.byCols;
+        for (let i = 0; i < byColsCount; i++) {
+          const v = row[byCols[i]!] as unknown;
+          const s = v === null || v === undefined ? "" : (typeof v === "string" ? v : String(v));
+          key += (i > 0 ? "\x1f" : "") + s;
+        }
       }
 
       let group = this.groupMap.get(key);
       if (!group) {
+        const groupValues: Record<string, unknown> = {};
+        const byCols = this.byCols;
+        for (let i = 0; i < byColsCount; i++) {
+          const col = byCols[i]!;
+          groupValues[col] = row[col] ?? null;
+        }
         group = {
           groupValues,
-          accs: this.compiled.map((c) => c.createAccumulator()),
+          accs: this.createGroupAccumulators(),
         };
         this.groupMap.set(key, group);
       }
 
-      for (let i = 0; i < this.compiled.length; i++) {
-        const item = this.compiled[i]!;
-        const val = item.evaluator ? item.evaluator(row) : null;
-        group.accs[i]!.add(val);
+      const accs = group.accs;
+      const numCompiled = this.compiledCount;
+      const compiled = this.compiled;
+      for (let i = 0; i < numCompiled; i++) {
+        const item = compiled[i]!;
+        const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+        accs[i]!.add(val);
+      }
+    }
+  }
+
+  addBatch(rows: Row[]): void {
+    const len = rows.length;
+    if (len === 0) return;
+
+    if (this.globalAccs) {
+      const globalAccs = this.globalAccs;
+      const compiled = this.compiled;
+      const numCompiled = this.compiledCount;
+
+      for (let r = 0; r < len; r++) {
+        const row = rows[r]!;
+        for (let i = 0; i < numCompiled; i++) {
+          const item = compiled[i]!;
+          const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+          globalAccs[i]!.add(val);
+        }
+      }
+      return;
+    }
+
+    if (!this.groupMap) return;
+
+    const groupMap = this.groupMap;
+    const compiled = this.compiled;
+    const numCompiled = this.compiledCount;
+    const byColsCount = this.byColsCount;
+
+    if (byColsCount === 1) {
+      const col0 = this.col0!;
+      for (let r = 0; r < len; r++) {
+        const row = rows[r]!;
+        const v0 = row[col0] as unknown;
+        const key = v0 === null || v0 === undefined ? "" : (typeof v0 === "string" ? v0 : String(v0));
+        let group = groupMap.get(key);
+        if (!group) {
+          const groupValues: Record<string, unknown> = { [col0]: v0 ?? null };
+          group = {
+            groupValues,
+            accs: this.createGroupAccumulators(),
+          };
+          groupMap.set(key, group);
+        }
+        const accs = group.accs;
+        for (let i = 0; i < numCompiled; i++) {
+          const item = compiled[i]!;
+          const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+          accs[i]!.add(val);
+        }
+      }
+      return;
+    }
+
+    if (byColsCount === 2) {
+      const col0 = this.col0!;
+      const col1 = this.col1!;
+      for (let r = 0; r < len; r++) {
+        const row = rows[r]!;
+        const v0 = row[col0] as unknown;
+        const v1 = row[col1] as unknown;
+        const s0 = v0 === null || v0 === undefined ? "" : (typeof v0 === "string" ? v0 : String(v0));
+        const s1 = v1 === null || v1 === undefined ? "" : (typeof v1 === "string" ? v1 : String(v1));
+        const key = s0 + "\x1f" + s1;
+        let group = groupMap.get(key);
+        if (!group) {
+          const groupValues: Record<string, unknown> = {
+            [col0]: v0 ?? null,
+            [col1]: v1 ?? null,
+          };
+          group = {
+            groupValues,
+            accs: this.createGroupAccumulators(),
+          };
+          groupMap.set(key, group);
+        }
+        const accs = group.accs;
+        for (let i = 0; i < numCompiled; i++) {
+          const item = compiled[i]!;
+          const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+          accs[i]!.add(val);
+        }
+      }
+      return;
+    }
+
+    // General case: 3 or more grouping columns
+    const byCols = this.byCols;
+    for (let r = 0; r < len; r++) {
+      const row = rows[r]!;
+      let key = "";
+      for (let i = 0; i < byColsCount; i++) {
+        const v = row[byCols[i]!] as unknown;
+        const s = v === null || v === undefined ? "" : (typeof v === "string" ? v : String(v));
+        key += (i > 0 ? "\x1f" : "") + s;
+      }
+      let group = groupMap.get(key);
+      if (!group) {
+        const groupValues: Record<string, unknown> = {};
+        for (let i = 0; i < byColsCount; i++) {
+          const col = byCols[i]!;
+          groupValues[col] = row[col] ?? null;
+        }
+        group = {
+          groupValues,
+          accs: this.createGroupAccumulators(),
+        };
+        groupMap.set(key, group);
+      }
+      const accs = group.accs;
+      for (let i = 0; i < numCompiled; i++) {
+        const item = compiled[i]!;
+        const val = item.directCol !== undefined ? row[item.directCol] : (item.evaluator ? item.evaluator(row) : null);
+        accs[i]!.add(val);
       }
     }
   }
@@ -340,20 +515,24 @@ export class ReduceAggregator implements Aggregator<Row[]> {
   result(): Row[] {
     if (this.globalAccs) {
       const summaryRow: Row = {};
-      for (let i = 0; i < this.compiled.length; i++) {
-        const item = this.compiled[i]!;
-        summaryRow[item.targetField] = this.globalAccs[i]!.result();
+      const numCompiled = this.compiledCount;
+      const compiled = this.compiled;
+      const globalAccs = this.globalAccs;
+      for (let i = 0; i < numCompiled; i++) {
+        summaryRow[compiled[i]!.targetField] = globalAccs[i]!.result();
       }
       return [summaryRow];
     }
 
     if (this.groupMap) {
       const rows: Row[] = [];
+      const numCompiled = this.compiledCount;
+      const compiled = this.compiled;
       for (const group of this.groupMap.values()) {
         const outRow: Row = { ...group.groupValues };
-        for (let i = 0; i < this.compiled.length; i++) {
-          const item = this.compiled[i]!;
-          outRow[item.targetField] = group.accs[i]!.result();
+        const accs = group.accs;
+        for (let i = 0; i < numCompiled; i++) {
+          outRow[compiled[i]!.targetField] = accs[i]!.result();
         }
         rows.push(outRow);
       }
@@ -372,10 +551,7 @@ export function reduceRows(options: ReduceOptions): TransformFunction {
     const aggregator = new ReduceAggregator(options);
 
     for await (const batch of stream) {
-      const len = batch.rows.length;
-      for (let i = 0; i < len; i++) {
-        aggregator.add(batch.rows[i]!);
-      }
+      aggregator.addBatch(batch.rows);
     }
 
     const finalRows = aggregator.result();

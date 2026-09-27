@@ -15,6 +15,7 @@ import {
 import { ProgressReporter } from "../../utils/progress.js";
 
 export interface InspectCommandOptions {
+  from?: string;
   sheet?: string;
   path?: string;
   delimiter?: string;
@@ -39,8 +40,11 @@ export async function inspectCommand(
     }
   }
 
-  const format =
-    inputPath !== "-" ? inferFormatFromPath(inputPath) || "CSV" : "CSV";
+  let fromFormat = options.from?.toLowerCase();
+  if (!fromFormat && inputPath !== "-") {
+    fromFormat = inferFormatFromPath(inputPath) ?? undefined;
+  }
+  const format = fromFormat || "csv";
 
   const stream = openReadableStream(inputPath);
   const reader = createReader(stream, {

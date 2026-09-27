@@ -129,8 +129,9 @@ export class JSONLReader implements TabularReader {
       rowCount += batch.rows.length;
     }
 
+    const fmt = this.options.format ? this.options.format.toUpperCase() : "JSONL";
     return {
-      format: "JSONL",
+      format: fmt,
       rowCount,
       columnCount: columnNames.length,
       columns: columnNames.map((name) => ({
@@ -141,3 +142,6 @@ export class JSONLReader implements TabularReader {
     };
   }
 }
+
+export const NDJSONReader = JSONLReader;
+export type NDJSONReaderOptions = JSONLReaderOptions;

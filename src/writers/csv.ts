@@ -7,6 +7,46 @@ export interface CSVWriterOptions extends WriterOptions {
   header?: boolean;
 }
 
+/**
+ * Fast CSV field escaping using vectorized String.prototype.includes checks instead of RegExp.test.
+ * Zero-allocation for standard numbers, booleans, and clean strings.
+ */
+export function formatCSVField(value: unknown, delimiter: string): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "number") {
+    return "" + value;
+  }
+  if (typeof value === "string") {
+    if (
+      value.includes(delimiter) ||
+      value.includes('"') ||
+      value.includes("\n") ||
+      value.includes("\r")
+    ) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  const str = typeof value === "object" ? JSON.stringify(value) : String(value);
+  if (
+    str.includes(delimiter) ||
+    str.includes('"') ||
+    str.includes("\n") ||
+    str.includes("\r")
+  ) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 export class CSVWriter implements TabularWriter {
   private output: Writable | string;
   private options: CSVWriterOptions;
@@ -26,21 +66,8 @@ export class CSVWriter implements TabularWriter {
     return stream;
   }
 
-  private escapeField(value: unknown, delimiter: string, quoteRegex: RegExp): string {
-    if (value === null || value === undefined) {
-      return "";
-    }
-    if (typeof value === "number" || typeof value === "bigint") {
-      return value.toString();
-    }
-    if (typeof value === "boolean") {
-      return value ? "true" : "false";
-    }
-    const str = typeof value === "string" ? value : (typeof value === "object" ? JSON.stringify(value) : String(value));
-    if (quoteRegex.test(str)) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
+  private escapeField(value: unknown, delimiter: string, _quoteRegex?: RegExp): string {
+    return formatCSVField(value, delimiter);
   }
 
   private async writeChunk(stream: Writable, data: string): Promise<void> {
@@ -59,8 +86,6 @@ export class CSVWriter implements TabularWriter {
 
     const outStream = this.getOutputStream(mergedOptions);
     let headers: string[] | null = null;
-    const escapedDelim = delimiter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const quoteRegex = new RegExp(`["\r\n${escapedDelim}]`);
 
     for await (const batch of dataStream) {
       if (batch.rows.length === 0) continue;
@@ -79,26 +104,61 @@ export class CSVWriter implements TabularWriter {
           let headerLine = "";
           for (let i = 0; i < headers.length; i++) {
             if (i > 0) headerLine += delimiter;
-            headerLine += this.escapeField(headers[i], delimiter, quoteRegex);
+            headerLine += formatCSVField(headers[i], delimiter);
           }
           headerLine += "\n";
           await this.writeChunk(outStream, headerLine);
         }
       }
 
-      let chunkText = "";
+      const rows = batch.rows;
+      const bLen = rows.length;
+      if (bLen === 0) continue;
       const hLen = headers.length;
-      for (const row of batch.rows) {
+      const lines = new Array<string>(bLen);
+
+      for (let r = 0; r < bLen; r++) {
+        const row = rows[r]!;
+        let line = "";
         for (let i = 0; i < hLen; i++) {
-          if (i > 0) chunkText += delimiter;
-          chunkText += this.escapeField(row[headers[i]!], delimiter, quoteRegex);
+          if (i > 0) line += delimiter;
+          const val = row[headers[i]!];
+          if (val === null || val === undefined) continue;
+          if (typeof val === "number") {
+            line += val;
+          } else if (typeof val === "string") {
+            if (
+              val.includes(delimiter) ||
+              val.includes('"') ||
+              val.includes("\n") ||
+              val.includes("\r")
+            ) {
+              line += `"${val.replace(/"/g, '""')}"`;
+            } else {
+              line += val;
+            }
+          } else if (typeof val === "boolean") {
+            line += val ? "true" : "false";
+          } else if (typeof val === "bigint") {
+            line += val;
+          } else {
+            const s = typeof val === "object" ? JSON.stringify(val) : String(val);
+            if (
+              s.includes(delimiter) ||
+              s.includes('"') ||
+              s.includes("\n") ||
+              s.includes("\r")
+            ) {
+              line += `"${s.replace(/"/g, '""')}"`;
+            } else {
+              line += s;
+            }
+          }
         }
-        chunkText += "\n";
+        lines[r] = line;
       }
 
-      if (chunkText.length > 0) {
-        await this.writeChunk(outStream, chunkText);
-      }
+      await this.writeChunk(outStream, lines.join("\n") + "\n");
     }
   }
 

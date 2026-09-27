@@ -220,4 +220,44 @@ describe("Reduce Transform (Global and Group-By Aggregations)", () => {
       count: 2,
     });
   });
+
+  it("should handle single, double, and 3+ group-by columns with nulls and expressions correctly", async () => {
+    const rows: Row[] = [
+      { a: "x", b: "1", c: "m", val: 10 },
+      { a: "x", b: "1", c: "m", val: 20 },
+      { a: "x", b: "2", c: "m", val: 30 },
+      { a: null, b: "2", c: "n", val: 40 },
+      { a: undefined, b: "2", c: "n", val: 50 },
+    ];
+
+    // Single-column grouping (fast path 1-col)
+    const singleStream = reduceRows({
+      by: ["a"],
+      aggregations: ["total = sum(val)", "cnt = count()"],
+    })(rowsToBatches(rows));
+    const singleRes = await collectRows(singleStream);
+    // null and undefined group together
+    expect(singleRes.length).toBe(2);
+    const xGroup = singleRes.find((r) => r.a === "x");
+    expect(xGroup).toEqual({ a: "x", total: 60, cnt: 3 });
+    const nullGroup = singleRes.find((r) => r.a === null);
+    expect(nullGroup).toEqual({ a: null, total: 90, cnt: 2 });
+
+    // Double-column grouping (fast path 2-col)
+    const doubleStream = reduceRows({
+      by: ["a", "b"],
+      aggregations: ["total = sum(val)", "avg_val = avg(val)", "min_val = min(val)", "max_val = max(val)"],
+    })(rowsToBatches(rows));
+    const doubleRes = await collectRows(doubleStream);
+    expect(doubleRes.length).toBe(3);
+
+    // 3+ columns grouping (general path)
+    const tripleStream = reduceRows({
+      by: ["a", "b", "c"],
+      aggregations: ["total = sum(val)"],
+    })(rowsToBatches(rows));
+    const tripleRes = await collectRows(tripleStream);
+    expect(tripleRes.length).toBe(3);
+  });
 });
+

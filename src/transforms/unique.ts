@@ -1,4 +1,4 @@
-import { encodeCompositeKey } from "../diff/key.js";
+import { encodeCompositeKeyString, encodeSingleKeyValue } from "../diff/key.js";
 import type { DataBatch, DataStream, Row, TransformFunction } from "../core/types.js";
 import { SpillableKeyStore } from "../utils/keystore.js";
 
@@ -10,13 +10,6 @@ export interface UniqueOptions {
   batchSize?: number;
 }
 
-function getRowUniqueKey(row: Row, byCols?: string[]): string {
-  if (byCols && byCols.length > 0) {
-    return encodeCompositeKey(row, byCols).encoded;
-  }
-  return JSON.stringify(row);
-}
-
 /**
  * Deduplicates rows by key columns (or whole row) with spillable disk backup for large cardinalities.
  */
@@ -25,7 +18,27 @@ export function uniqueRows(options: UniqueOptions = {}): TransformFunction {
   const byCols = options.by
     ? (Array.isArray(options.by) ? options.by : options.by.split(",").map((s) => s.trim()).filter(Boolean))
     : undefined;
+  const numByCols = byCols ? byCols.length : 0;
+  const col0 = numByCols > 0 ? byCols![0]! : undefined;
+  const col1 = numByCols > 1 ? byCols![1]! : undefined;
   const effectiveBatchSize = options.batchSize || 1000;
+
+  function getKey(row: Row): string {
+    if (numByCols === 0) {
+      return JSON.stringify(row);
+    }
+    if (numByCols === 1) {
+      return encodeSingleKeyValue(row[col0!]);
+    }
+    if (numByCols === 2) {
+      return (
+        encodeSingleKeyValue(row[col0!]) +
+        "|" +
+        encodeSingleKeyValue(row[col1!])
+      );
+    }
+    return encodeCompositeKeyString(row, byCols!);
+  }
 
   return (stream: DataStream): DataStream => {
     return (async function* () {
@@ -41,11 +54,17 @@ export function uniqueRows(options: UniqueOptions = {}): TransformFunction {
           let globalOffset = 0;
 
           for await (const batch of stream) {
-            for (let i = 0; i < batch.rows.length; i++) {
-              const row = batch.rows[i]!;
-              const key = getRowUniqueKey(row, byCols);
+            const rows = batch.rows;
+            const len = rows.length;
+            for (let i = 0; i < len; i++) {
+              const row = rows[i]!;
+              const key = getKey(row);
 
-              const isNew = await keyStore.add(key);
+              let isNew = keyStore.addSync(key);
+              if (isNew === null) {
+                isNew = await keyStore.add(key);
+              }
+
               if (isNew) {
                 currentBatchRows.push(row);
                 if (currentBatchRows.length >= effectiveBatchSize) {
@@ -72,9 +91,11 @@ export function uniqueRows(options: UniqueOptions = {}): TransformFunction {
           let globalOffset = 0;
 
           for await (const batch of stream) {
-            for (let i = 0; i < batch.rows.length; i++) {
-              const row = batch.rows[i]!;
-              const key = getRowUniqueKey(row, byCols);
+            const rows = batch.rows;
+            const len = rows.length;
+            for (let i = 0; i < len; i++) {
+              const row = rows[i]!;
+              const key = getKey(row);
               latestRows.set(key, row);
             }
           }

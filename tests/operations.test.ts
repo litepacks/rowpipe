@@ -132,6 +132,59 @@ describe("Rowpipe 2.0 Operations & Planner Test Suite", () => {
       expect(results).toHaveLength(2);
       expect(results.map((r) => r.name)).toEqual(["Charlie", "Alice"]);
     });
+
+    it("should handle multi-key top-k with ties on primary column", async () => {
+      const tiedData: Row[] = [
+        { name: "P1", category: "A", price: 10 },
+        { name: "P2", category: "B", price: 50 },
+        { name: "P3", category: "A", price: 30 },
+        { name: "P4", category: "A", price: 20 },
+        { name: "P5", category: "B", price: 40 },
+      ];
+      // Category ASC, price DESC -> top 3
+      const pipeline = createPipeline(createMockStream(tiedData)).pipe(
+        topRows({ by: "category:asc,price:desc", count: 3 })
+      );
+      const results = await pipeline.toArray();
+
+      expect(results).toHaveLength(3);
+      expect(results.map((r) => r.name)).toEqual(["P3", "P4", "P1"]);
+    });
+
+    it("should handle stream with fewer rows than requested count", async () => {
+      const shortData: Row[] = [
+        { id: 1, val: 100 },
+        { id: 2, val: 200 },
+      ];
+      const pipeline = createPipeline(createMockStream(shortData)).pipe(
+        topRows({ by: "val:desc", count: 10 })
+      );
+      const results = await pipeline.toArray();
+
+      expect(results).toHaveLength(2);
+      expect(results.map((r) => r.id)).toEqual([2, 1]);
+    });
+
+    it("should handle null values consistently with sort transform", async () => {
+      const dataWithNulls: Row[] = [
+        { id: 1, score: null },
+        { id: 2, score: 50 },
+        { id: 3, score: 90 },
+        { id: 4, score: null },
+        { id: 5, score: 10 },
+      ];
+      const topPipeline = createPipeline(createMockStream(dataWithNulls)).pipe(
+        topRows({ by: "score:desc", count: 3 })
+      );
+      const topResults = await topPipeline.toArray();
+
+      const sortPipeline = createPipeline(createMockStream(dataWithNulls))
+        .pipe(sortRows({ by: "score:desc" }))
+        .pipe(limitRows(3));
+      const sortResults = await sortPipeline.toArray();
+
+      expect(topResults.map((r) => r.id)).toEqual(sortResults.map((r) => r.id));
+    });
   });
 
   // 4. Sort & External Merge Sort
@@ -270,7 +323,51 @@ describe("Rowpipe 2.0 Operations & Planner Test Suite", () => {
         "charlie@test.com:v1",
       ]);
     });
+
+    it("should deduplicate by multiple columns and whole row", async () => {
+      const rows = [
+        { id: 1, org: "A", team: "Engineering", name: "Alice" },
+        { id: 2, org: "A", team: "Engineering", name: "Bob" },
+        { id: 3, org: "A", team: "Marketing", name: "Charlie" },
+        { id: 4, org: "B", team: "Engineering", name: "David" },
+      ];
+      const multiPipeline = createPipeline(createMockStream(rows)).pipe(
+        uniqueRows({ by: ["org", "team"] })
+      );
+      const multiResults = await multiPipeline.toArray();
+      expect(multiResults).toHaveLength(3);
+
+      // Whole row deduplication (no "by" option)
+      const duplicateRows = [
+        { a: 1, b: "x" },
+        { a: 1, b: "x" },
+        { a: 2, b: "y" },
+      ];
+      const wholePipeline = createPipeline(createMockStream(duplicateRows)).pipe(
+        uniqueRows()
+      );
+      const wholeResults = await wholePipeline.toArray();
+      expect(wholeResults).toHaveLength(2);
+    });
+
+    it("should gracefully spill to disk when memoryLimit is exceeded", async () => {
+      // 100 unique items with tiny 50-byte memory limit to force spill
+      const streamRows = Array.from({ length: 50 }, (_, i) => ({
+        key: `user_${i}`,
+        val: i,
+      }));
+      // Add duplicates
+      streamRows.push({ key: "user_0", val: 999 });
+      streamRows.push({ key: "user_1", val: 999 });
+
+      const spillPipeline = createPipeline(createMockStream(streamRows)).pipe(
+        uniqueRows({ by: "key", memoryLimit: "100b" })
+      );
+      const results = await spillPipeline.toArray();
+      expect(results).toHaveLength(50);
+    });
   });
+
 
   // 6. Group & Aggregations
   describe("Group & Aggregations Transform", () => {

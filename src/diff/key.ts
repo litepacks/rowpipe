@@ -65,6 +65,36 @@ export interface EncodedKeyResult {
 }
 
 /**
+ * Encodes row key columns into a deterministic composite key string without intermediate object allocations.
+ */
+export function encodeCompositeKeyString(
+  row: Row,
+  keyColumns: string[],
+  options: { coerce?: boolean } = {}
+): string {
+  const len = keyColumns.length;
+  if (len === 1) {
+    return encodeSingleKeyValue(row[keyColumns[0]!], options.coerce);
+  }
+  if (len === 2) {
+    return (
+      encodeSingleKeyValue(row[keyColumns[0]!], options.coerce) +
+      "|" +
+      encodeSingleKeyValue(row[keyColumns[1]!], options.coerce)
+    );
+  }
+
+  let encoded = "";
+  for (let i = 0; i < len; i++) {
+    if (i > 0) {
+      encoded += "|";
+    }
+    encoded += encodeSingleKeyValue(row[keyColumns[i]!], options.coerce);
+  }
+  return encoded;
+}
+
+/**
  * Encodes row key columns into a deterministic, collision-proof typed composite key string.
  */
 export function encodeCompositeKey(

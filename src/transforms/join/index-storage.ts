@@ -73,7 +73,50 @@ export class SpillableJoinIndex implements JoinIndex {
     this.isSpilled = true;
   }
 
+  setSync(key: string, row: Row): boolean {
+    if (this.isSpilled) {
+      return false;
+    }
+
+    let propCount = 0;
+    for (const _ in row) propCount++;
+    const rowBytes = key.length * 2 + 128 + propCount * 32;
+
+    if (this.estimatedBytes + rowBytes >= this.memoryLimitBytes) {
+      this.spillToDisk();
+      return false;
+    }
+
+    this.totalCount++;
+    let existing = this.memoryMap.get(key);
+    if (!existing) {
+      existing = [];
+      this.memoryMap.set(key, existing);
+    }
+    existing.push(row);
+    this.estimatedBytes += rowBytes;
+    return true;
+  }
+
+  getSync(key: string): Row[] | undefined {
+    if (this.isSpilled) {
+      return undefined;
+    }
+    return this.memoryMap.get(key);
+  }
+
+  hasSync(key: string): boolean | undefined {
+    if (this.isSpilled) {
+      return undefined;
+    }
+    return this.memoryMap.has(key);
+  }
+
   async set(key: string, row: Row): Promise<void> {
+    if (this.setSync(key, row)) {
+      return;
+    }
+
     this.totalCount++;
 
     if (this.isSpilled && this.fd !== undefined) {
@@ -89,21 +132,6 @@ export class SpillableJoinIndex implements JoinIndex {
         this.diskIndex.set(key, list);
       }
       list.push({ offset, length: buf.length });
-      return;
-    }
-
-    let existing = this.memoryMap.get(key);
-    if (!existing) {
-      existing = [];
-      this.memoryMap.set(key, existing);
-    }
-    existing.push(row);
-
-    // Size estimate: key bytes + base object overhead + properties
-    this.estimatedBytes += key.length * 2 + 128 + Object.keys(row).length * 32;
-
-    if (this.estimatedBytes >= this.memoryLimitBytes) {
-      this.spillToDisk();
     }
   }
 

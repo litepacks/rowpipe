@@ -1,6 +1,6 @@
 ---
 name: rowpipe
-description: Stream-first tabular data toolkit for inspecting, analyzing, transforming, validating, converting, mapping, reducing, and streaming large datasets across PostgreSQL, MySQL, SQLite, CSV, TSV, JSON, JSONL, XLSX, Apache Parquet, and Markdown formats with bounded O(1) memory and extreme throughput (~500,000 rows/s).
+description: Stream-first tabular data toolkit for inspecting, analyzing, transforming, validating, converting, mapping, reducing, and streaming large datasets across PostgreSQL, MySQL, SQLite, CSV, TSV, JSON, JSONL, NDJSON, XLSX, Apache Parquet, Apache Arrow / Feather, Apache Avro, XML, and Markdown formats with bounded O(1) memory and extreme throughput (~500,000 rows/s).
 ---
 
 # Rowpipe: Stream-First Tabular Data Toolkit
@@ -18,7 +18,7 @@ Rowpipe is a high-performance, stream-first command-line toolkit and Node.js lib
 | **DB Schema** | `rowpipe db <url> --schema <table> [--json]` | Inspect database table columns, types, nullability, and primary keys |
 | **File to DB** | `rowpipe <file> --to-db <url> --to-table <table> [--create-table]` | Stream load files directly into database tables with batch inserts and transactions |
 | **Inspect** | `rowpipe inspect <file> [--sheet <name>] [--json]` | Inspect row count, column types, null %, and HLL uniqueness |
-| **Convert** | `rowpipe convert <input> <output> [--all-sheets]` | Stream convert between CSV, TSV, JSON, JSONL, XLSX, Parquet, Markdown |
+| **Convert** | `rowpipe convert <input> <output> [--all-sheets]` | Stream convert between CSV, TSV, JSON, JSONL, NDJSON, XLSX, Parquet, Arrow, Feather, Avro, XML, Markdown |
 | **Schema** | `rowpipe schema <file> [--full] [--sample <n>]` | Infer column types and semantic patterns (email, url, uuid) |
 | **Stats** | `rowpipe stats <file> [--column <name>]` | Streaming Welford numeric stats & HyperLogLog distinct count |
 | **Map** | `rowpipe map <file> "<col1=expr1>" "<col2=expr2>"` | Derive and compute columns per row with arithmetic/JSON dot-notation |
@@ -525,6 +525,32 @@ rowpipe mcp status
 rowpipe mcp logs
 ```
 
+---
 
+## 🛠️ CLI Developer Experience & Ergonomics
 
+### Supported Formats & Capabilities Matrix
+Inspect all supported reader/writer formats, compression support, and streaming bounds:
+```bash
+rowpipe formats
+rowpipe formats --json
+```
 
+### Shell Completion Auto-Installation
+Automatically detect your shell (`zsh`, `bash`, `fish`) and configure tab completions:
+```bash
+rowpipe completion --install
+# Or output script to stdout:
+rowpipe completion zsh
+```
+
+### Safe Pipeline Preview (`--dry-run` / `--preview`)
+Inspect execution plans, input/output paths, and projected schemas without mutating disk:
+```bash
+rowpipe convert big_input.parquet output.csv --dry-run
+rowpipe input.csv --filter "age > 30" --to output.parquet --preview --json
+```
+
+### Magic Byte Sniffing & Fuzzy Suggestions
+- Files without extensions or in-memory streams are automatically detected via magic byte sniffing (Parquet, Arrow, Avro, SQLite, XLSX, XML, JSON, NDJSON).
+- Typo-tolerant CLI with "Did you mean?" suggestions on unknown formats (e.g. `rowpipe convert in.csv out.parqet` -> `Did you mean "parquet"?`).

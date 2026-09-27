@@ -7,14 +7,19 @@ import type { DataBatch, DataStream, Row, TransformFunction } from "../../core/t
 import { Heap } from "../../utils/heap.js";
 import {
   createRowComparator,
+  extractSortKey,
   parseSortSpecs,
   SequencedRow,
+  SortKeySpec,
   SortOptions,
 } from "./comparator.js";
 
 interface HeapRunEntry {
   row: Row;
   seq: number;
+  k0?: unknown;
+  k1?: unknown;
+  keys?: unknown[];
   runIndex: number;
 }
 
@@ -33,6 +38,16 @@ export function externalSort(options: SortOptions): TransformFunction {
   const memoryLimitBytes = parseMemoryLimit(options.memoryLimit, 256 * 1024 * 1024);
   const effectiveBatchSize = options.batchSize || 1000;
   const baseTempDir = options.tempDir || os.tmpdir();
+
+  const numSpecs = specs.length;
+  const spec0 = specs[0]!;
+  const col0 = spec0.column;
+  let spec1: SortKeySpec | undefined;
+  let col1: string | undefined;
+  if (numSpecs > 1) {
+    spec1 = specs[1]!;
+    col1 = spec1.column;
+  }
 
   return (stream: DataStream): DataStream => {
     return (async function* () {
@@ -57,7 +72,26 @@ export function externalSort(options: SortOptions): TransformFunction {
         for await (const batch of stream) {
           for (let i = 0; i < batch.rows.length; i++) {
             const row = batch.rows[i]!;
-            currentRun.push({ row, seq: totalSeq++ });
+            let item: SequencedRow;
+
+            if (numSpecs === 1) {
+              item = { row, seq: totalSeq++, k0: extractSortKey(row[col0], spec0) };
+            } else if (numSpecs === 2) {
+              item = {
+                row,
+                seq: totalSeq++,
+                k0: extractSortKey(row[col0], spec0),
+                k1: extractSortKey(row[col1!], spec1!),
+              };
+            } else {
+              const keys = new Array(numSpecs);
+              for (let s = 0; s < numSpecs; s++) {
+                keys[s] = extractSortKey(row[specs[s]!.column], specs[s]!);
+              }
+              item = { row, seq: totalSeq++, keys };
+            }
+
+            currentRun.push(item);
             // Estimate row memory (~64 bytes overhead + keys/values)
             currentRunBytes += 64 + Object.keys(row).length * 24;
 
@@ -71,7 +105,15 @@ export function externalSort(options: SortOptions): TransformFunction {
 
               for (let r = 0; r < currentRun.length; r++) {
                 const item = currentRun[r]!;
-                writeStream.write(JSON.stringify({ row: item.row, seq: item.seq }) + "\n");
+                writeStream.write(
+                  JSON.stringify({
+                    row: item.row,
+                    seq: item.seq,
+                    k0: item.k0,
+                    k1: item.k1,
+                    keys: item.keys,
+                  }) + "\n"
+                );
               }
 
               await new Promise<void>((resolve, reject) => {
@@ -113,7 +155,15 @@ export function externalSort(options: SortOptions): TransformFunction {
 
           for (let r = 0; r < currentRun.length; r++) {
             const item = currentRun[r]!;
-            writeStream.write(JSON.stringify({ row: item.row, seq: item.seq }) + "\n");
+            writeStream.write(
+              JSON.stringify({
+                row: item.row,
+                seq: item.seq,
+                k0: item.k0,
+                k1: item.k1,
+                keys: item.keys,
+              }) + "\n"
+            );
           }
 
           await new Promise<void>((resolve, reject) => {
@@ -150,8 +200,21 @@ export function externalSort(options: SortOptions): TransformFunction {
         for (let i = 0; i < k; i++) {
           const next = await iterators[i]!.next();
           if (!next.done && next.value.trim().length > 0) {
-            const parsed = JSON.parse(next.value) as { row: Row; seq: number };
-            heap.push({ row: parsed.row, seq: parsed.seq, runIndex: i });
+            const parsed = JSON.parse(next.value) as {
+              row: Row;
+              seq: number;
+              k0?: unknown;
+              k1?: unknown;
+              keys?: unknown[];
+            };
+            heap.push({
+              row: parsed.row,
+              seq: parsed.seq,
+              k0: parsed.k0,
+              k1: parsed.k1,
+              keys: parsed.keys,
+              runIndex: i,
+            });
           }
         }
 
@@ -174,8 +237,21 @@ export function externalSort(options: SortOptions): TransformFunction {
           // Advance iterator for smallest.runIndex
           const next = await iterators[smallest.runIndex]!.next();
           if (!next.done && next.value.trim().length > 0) {
-            const parsed = JSON.parse(next.value) as { row: Row; seq: number };
-            heap.push({ row: parsed.row, seq: parsed.seq, runIndex: smallest.runIndex });
+            const parsed = JSON.parse(next.value) as {
+              row: Row;
+              seq: number;
+              k0?: unknown;
+              k1?: unknown;
+              keys?: unknown[];
+            };
+            heap.push({
+              row: parsed.row,
+              seq: parsed.seq,
+              k0: parsed.k0,
+              k1: parsed.k1,
+              keys: parsed.keys,
+              runIndex: smallest.runIndex,
+            });
           }
         }
 

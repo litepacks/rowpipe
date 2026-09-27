@@ -25,8 +25,12 @@ function hash32(str: string): number {
  */
 function hashNumber32(n: number): number {
   let h: number;
-  if (Number.isInteger(n)) {
+  if ((n | 0) === n) {
     h = (n ^ (n >>> 16) ^ 0x811c9dc5) >>> 0;
+  } else if (Number.isInteger(n)) {
+    const lo = n | 0;
+    const hi = (n / 4294967296) | 0;
+    h = (lo ^ hi ^ 0x811c9dc5) >>> 0;
   } else {
     h = (((n * 100000) | 0) ^ 0x811c9dc5) >>> 0;
   }
@@ -45,12 +49,18 @@ function hashNumber32(n: number): number {
 export class HyperLogLog {
   private p: number;
   private m: number;
+  private mask: number;
+  private maxZeros: number;
+  private pMinusOne: number;
   private registers: Uint8Array;
   private alphaMM: number;
 
   constructor(p = 10) {
     this.p = p;
     this.m = 1 << p;
+    this.mask = this.m - 1;
+    this.maxZeros = 33 - p;
+    this.pMinusOne = p - 1;
     this.registers = new Uint8Array(this.m);
 
     // Alpha constant calculation
@@ -60,28 +70,34 @@ export class HyperLogLog {
     else this.alphaMM = (0.7213 / (1 + 1.079 / this.m)) * this.m * this.m;
   }
 
-  add(value: unknown): void {
-    if (value === null || value === undefined) return;
-    const hash =
-      typeof value === "number"
-        ? hashNumber32(value)
-        : hash32(typeof value === "string" ? value : String(value));
-
-    // Low p bits for register index
-    const index = hash & (this.m - 1);
-    // Remaining (32 - p) bits for leading zeros
+  addNumber(n: number): void {
+    const hash = hashNumber32(n);
+    const index = hash & this.mask;
     const w = hash >>> this.p;
-
-    // Single-cycle CPU instruction Math.clz32 for leading zero count
-    let leadingZeros: number;
-    if (w === 0) {
-      leadingZeros = 32 - this.p + 1;
-    } else {
-      leadingZeros = Math.clz32(w) - this.p + 1;
-    }
-
+    const leadingZeros = w === 0 ? this.maxZeros : Math.clz32(w) - this.pMinusOne;
     if (leadingZeros > this.registers[index]!) {
       this.registers[index] = leadingZeros;
+    }
+  }
+
+  addString(str: string): void {
+    const hash = hash32(str);
+    const index = hash & this.mask;
+    const w = hash >>> this.p;
+    const leadingZeros = w === 0 ? this.maxZeros : Math.clz32(w) - this.pMinusOne;
+    if (leadingZeros > this.registers[index]!) {
+      this.registers[index] = leadingZeros;
+    }
+  }
+
+  add(value: unknown): void {
+    if (value === null || value === undefined) return;
+    if (typeof value === "number") {
+      this.addNumber(value);
+    } else if (typeof value === "string") {
+      this.addString(value);
+    } else {
+      this.addString(String(value));
     }
   }
 
@@ -163,21 +179,10 @@ export class NumericStatsCollector {
   public M2 = 0; // sum of squared differences from the mean
   public hll = new HyperLogLog();
 
-  add(val: unknown): void {
-    if (val === null || val === undefined || val === "") {
-      this.nullCount++;
-      return;
-    }
-
-    const num = typeof val === "number" ? val : Number(val);
-    if (Number.isNaN(num)) {
-      this.nullCount++;
-      return;
-    }
-
+  addNumber(num: number): void {
     this.count++;
     this.sum += num;
-    this.hll.add(num);
+    this.hll.addNumber(num);
 
     if (this.min === null || num < this.min) this.min = num;
     if (this.max === null || num > this.max) this.max = num;
@@ -187,6 +192,25 @@ export class NumericStatsCollector {
     this.mean += delta / this.count;
     const delta2 = num - this.mean;
     this.M2 += delta * delta2;
+  }
+
+  addNull(): void {
+    this.nullCount++;
+  }
+
+  add(val: unknown): void {
+    if (val === null || val === undefined || val === "") {
+      this.nullCount++;
+      return;
+    }
+
+    const num = typeof val === "number" ? val : Number(val);
+    if (Number.isNaN(num) || typeof val === "boolean") {
+      this.nullCount++;
+      return;
+    }
+
+    this.addNumber(num);
   }
 
   merge(other: NumericStatsCollector): void {
@@ -252,23 +276,18 @@ export class StringStatsCollector {
   private frequencyMap = new Map<string, number>();
   private maxTrackedValues = 1000;
 
-  add(val: unknown): void {
-    if (val === null || val === undefined) {
-      this.nullCount++;
-      return;
-    }
-
-    const str = typeof val === "string" ? val : String(val);
-    if (str === "") {
+  addString(str: string): void {
+    const len = str.length;
+    if (len === 0) {
       this.emptyCount++;
     }
 
     this.count++;
-    this.totalLength += str.length;
-    this.hll.add(str);
+    this.totalLength += len;
+    this.hll.addString(str);
 
-    if (this.minLength === null || str.length < this.minLength) this.minLength = str.length;
-    if (this.maxLength === null || str.length > this.maxLength) this.maxLength = str.length;
+    if (this.minLength === null || len < this.minLength) this.minLength = len;
+    if (this.maxLength === null || len > this.maxLength) this.maxLength = len;
 
     // Track top values bounded
     const currentCount = this.frequencyMap.get(str);
@@ -277,6 +296,19 @@ export class StringStatsCollector {
     } else if (this.frequencyMap.size < this.maxTrackedValues) {
       this.frequencyMap.set(str, 1);
     }
+  }
+
+  addNull(): void {
+    this.nullCount++;
+  }
+
+  add(val: unknown): void {
+    if (val === null || val === undefined) {
+      this.nullCount++;
+      return;
+    }
+
+    this.addString(typeof val === "string" ? val : String(val));
   }
 
   result(): StringColumnStats {
@@ -358,33 +390,56 @@ export class DatasetStatsAggregator implements Aggregator<DatasetStatsResult> {
       const val = row[h.col];
 
       if (h.hint.lockedType === "numeric") {
-        if (val !== null && val !== undefined && val !== "") {
-          const num = typeof val === "number" ? val : Number(val);
-          if (!Number.isNaN(num) && typeof val !== "boolean") {
-            h.numCollector.add(num);
-          } else {
-            h.numCollector.add(null);
-          }
+        if (val === null || val === undefined || val === "") {
+          h.numCollector.addNull();
+        } else if (typeof val === "number") {
+          h.numCollector.addNumber(val);
+        } else if (typeof val === "boolean") {
+          h.numCollector.addNull();
         } else {
-          h.numCollector.add(null);
+          const num = Number(val);
+          if (!Number.isNaN(num)) {
+            h.numCollector.addNumber(num);
+          } else {
+            h.numCollector.addNull();
+          }
         }
       } else if (h.hint.lockedType === "string") {
-        h.strCollector.add(val);
+        if (val === null || val === undefined) {
+          h.strCollector.addNull();
+        } else if (typeof val === "string") {
+          h.strCollector.addString(val);
+        } else {
+          h.strCollector.addString(String(val));
+        }
       } else {
         // Warmup sampling phase (first 200 rows)
-        h.strCollector.add(val);
-
-        if (val !== null && val !== undefined && val !== "") {
-          h.hint.totalVotes++;
-          const num = typeof val === "number" ? val : Number(val);
-          if (!Number.isNaN(num) && typeof val !== "boolean") {
-            h.hint.numericVotes++;
-            h.numCollector.add(num);
-          } else {
-            h.numCollector.add(null);
-          }
+        if (val === null || val === undefined) {
+          h.strCollector.addNull();
+          h.numCollector.addNull();
         } else {
-          h.numCollector.add(null);
+          const str = typeof val === "string" ? val : String(val);
+          h.strCollector.addString(str);
+
+          if (str !== "") {
+            h.hint.totalVotes++;
+            if (typeof val === "number") {
+              h.hint.numericVotes++;
+              h.numCollector.addNumber(val);
+            } else if (typeof val !== "boolean") {
+              const num = Number(str);
+              if (!Number.isNaN(num)) {
+                h.hint.numericVotes++;
+                h.numCollector.addNumber(num);
+              } else {
+                h.numCollector.addNull();
+              }
+            } else {
+              h.numCollector.addNull();
+            }
+          } else {
+            h.numCollector.addNull();
+          }
         }
 
         if (h.hint.totalVotes >= 200) {

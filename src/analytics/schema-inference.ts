@@ -29,11 +29,11 @@ export function classifyPrimitiveType(value: unknown): ColumnType {
     return "null";
   }
 
-  if (typeof value === "boolean") return "boolean";
-  if (typeof value === "bigint") return "bigint";
   if (typeof value === "number") {
     return Number.isInteger(value) ? "integer" : "number";
   }
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "bigint") return "bigint";
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
     return "binary";
   }
@@ -42,15 +42,37 @@ export function classifyPrimitiveType(value: unknown): ColumnType {
     return "json";
   }
 
-  const str = String(value).trim();
+  const str = typeof value === "string" ? value.trim() : String(value).trim();
+  const len = str.length;
+  if (len === 0) return "null";
 
-  // Boolean strings
-  if (["true", "false"].includes(str.toLowerCase())) {
+  // Fast boolean check (zero array allocation)
+  if (
+    str === "true" ||
+    str === "false" ||
+    str === "TRUE" ||
+    str === "FALSE" ||
+    str === "True" ||
+    str === "False"
+  ) {
     return "boolean";
   }
 
-  // Integer regex
-  if (/^-?\d+$/.test(str)) {
+  // Fast integer check
+  let isInt = true;
+  let i = 0;
+  if (str.charCodeAt(0) === 45 /* - */) {
+    if (len === 1) isInt = false;
+    i = 1;
+  }
+  for (; i < len; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      isInt = false;
+      break;
+    }
+  }
+  if (isInt && len > 0 && !(len === 1 && str.charCodeAt(0) === 45)) {
     return "integer";
   }
 
@@ -59,13 +81,13 @@ export function classifyPrimitiveType(value: unknown): ColumnType {
     return "number";
   }
 
-  // Date / Datetime
-  if (DATE_REGEX.test(str)) {
+  // Date / Datetime (guarded by length to avoid expensive regex/date parsing on arbitrary strings)
+  if (len === 10 && DATE_REGEX.test(str)) {
     const d = new Date(str);
     if (!Number.isNaN(d.getTime())) return "date";
   }
 
-  if (DATETIME_REGEX.test(str)) {
+  if (len >= 19 && len <= 35 && DATETIME_REGEX.test(str)) {
     const d = new Date(str);
     if (!Number.isNaN(d.getTime())) return "datetime";
   }
@@ -94,9 +116,10 @@ export class SchemaInferenceAggregator implements Aggregator<InferredSchemaResul
     if (this.totalRows >= this.maxSample) return;
     this.totalRows++;
 
-    for (const [col, val] of Object.entries(row)) {
-      if (!this.columnStats.has(col)) {
-        this.columnStats.set(col, {
+    for (const col in row) {
+      let stat = this.columnStats.get(col);
+      if (!stat) {
+        stat = {
           counts: {
             string: 0,
             integer: 0,
@@ -114,17 +137,17 @@ export class SchemaInferenceAggregator implements Aggregator<InferredSchemaResul
           semanticCounts: {},
           nullCount: 0,
           totalCount: 0,
-        });
+        };
+        this.columnStats.set(col, stat);
       }
 
-      const stat = this.columnStats.get(col)!;
       stat.totalCount++;
-
+      const val = row[col];
       const pType = classifyPrimitiveType(val);
       stat.counts[pType]++;
       if (pType === "null") {
         stat.nullCount++;
-      } else {
+      } else if (pType === "string") {
         const sem = detectSemanticType(val);
         if (sem) {
           stat.semanticCounts[sem] = (stat.semanticCounts[sem] || 0) + 1;

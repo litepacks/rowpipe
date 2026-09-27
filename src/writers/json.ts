@@ -33,11 +33,22 @@ export class JSONWriter implements TabularWriter {
     await this.writeChunk(outStream, "[\n");
 
     for await (const batch of dataStream) {
-      for (const row of batch.rows) {
+      const rows = batch.rows;
+      const bLen = rows.length;
+      if (bLen === 0) continue;
+
+      const lines = new Array<string>(bLen);
+      for (let i = 0; i < bLen; i++) {
+        const row = rows[i]!;
         const prefix = isFirstRow ? "  " : ",\n  ";
         isFirstRow = false;
-        await this.writeChunk(outStream, `${prefix}${safeJsonStringify(row)}`);
+        try {
+          lines[i] = prefix + JSON.stringify(row);
+        } catch {
+          lines[i] = prefix + safeJsonStringify(row);
+        }
       }
+      await this.writeChunk(outStream, lines.join(""));
     }
 
     await this.writeChunk(outStream, "\n]\n");

@@ -41,15 +41,16 @@ describe("Rowpipe Model Context Protocol (MCP) Server Suite", () => {
   });
 
   describe("Server Initialization & Registry", () => {
-    it("should instantiate rowpipe MCP server with 9 registered tools and resources", () => {
+    it("should instantiate rowpipe MCP server with 10 registered tools and resources", () => {
       const app = createRowpipeMcpServer({ registerInCentral: false });
       const tools = app.getTools();
 
-      expect(tools.length).toBe(9);
+      expect(tools.length).toBe(10);
       const toolNames = tools.map((t) => t.name).sort();
       expect(toolNames).toEqual([
         "rowpipe_convert",
         "rowpipe_diff",
+        "rowpipe_formats",
         "rowpipe_inspect",
         "rowpipe_profile",
         "rowpipe_query",
@@ -185,6 +186,42 @@ describe("Rowpipe Model Context Protocol (MCP) Server Suite", () => {
       expect(res.text).toContain("Alice");
       expect(res.text).toContain("Bob");
     });
+    it("should execute rowpipe_formats tool returning capabilities matrix", async () => {
+      const res = await app.callTool("rowpipe_formats", { format: "json" });
+      expect(res.isError).toBeFalsy();
+      expect(res.data.totalFormats).toBe(16);
+      expect(res.data.formats.some((f: any) => f.format === "arrow")).toBe(true);
+      expect(res.data.formats.some((f: any) => f.format === "avro")).toBe(true);
+      expect(res.data.formats.some((f: any) => f.format === "xml")).toBe(true);
+      expect(res.data.formats.some((f: any) => f.format === "ndjson")).toBe(true);
+
+      const columnar = await app.callTool("rowpipe_formats", { category: "Columnar" });
+      expect(columnar.isError).toBeFalsy();
+      expect(columnar.data.formats.map((f: any) => f.format).sort()).toEqual(["arrow", "parquet"].sort());
+    });
+
+    it("should execute rowpipe_inspect and rowpipe_query on XML with repeating path", async () => {
+      const xmlPath = join(TEST_DIR, "catalog.xml");
+      const xmlContent = `<catalog><item><id>1</id><title>Book A</title><price>19.99</price></item><item><id>2</id><title>Book B</title><price>29.99</price></item></catalog>`;
+      await writeFile(xmlPath, xmlContent, "utf8");
+
+      const inspectRes = await app.callTool("rowpipe_inspect", {
+        filePath: xmlPath,
+        path: "catalog.item",
+      });
+      expect(inspectRes.isError).toBeFalsy();
+      expect(inspectRes.data.rows).toBe(2);
+      expect(inspectRes.data.format).toBe("XML");
+
+      const queryRes = await app.callTool("rowpipe_query", {
+        filePath: xmlPath,
+        path: "catalog.item",
+        filter: "price > 20",
+      });
+      expect(queryRes.isError).toBeFalsy();
+      expect(queryRes.data.totalReturned).toBe(1);
+      expect(queryRes.data.rows[0].title).toBe("Book B");
+    });
   });
 
   describe("Dynamic Resource Templates", () => {
@@ -213,9 +250,9 @@ describe("Rowpipe Model Context Protocol (MCP) Server Suite", () => {
   describe("CLI Command Integration", () => {
     const cliBin = join(process.cwd(), "dist", "cli", "index.js");
 
-    it("should list all 9 tools via 'rowpipe mcp tools'", async () => {
+    it("should list all 10 tools via 'rowpipe mcp tools'", async () => {
       const { stdout } = await execFileAsync("node", [cliBin, "mcp", "tools"]);
-      expect(stdout).toContain("Registered Tools (9):");
+      expect(stdout).toContain("Registered Tools (10):");
       expect(stdout).toContain("rowpipe_inspect");
       expect(stdout).toContain("rowpipe_query");
       expect(stdout).toContain("rowpipe_schema");
@@ -225,6 +262,7 @@ describe("Rowpipe Model Context Protocol (MCP) Server Suite", () => {
       expect(stdout).toContain("rowpipe_diff");
       expect(stdout).toContain("rowpipe_profile");
       expect(stdout).toContain("rowpipe_table");
+      expect(stdout).toContain("rowpipe_formats");
     });
 
     it("should execute 'rowpipe mcp call rowpipe_inspect --filePath ...'", async () => {

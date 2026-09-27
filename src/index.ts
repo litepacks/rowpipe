@@ -1,9 +1,5 @@
 // Core
-export * from "./core/types.js";
-export * from "./core/errors.js";
-export * from "./core/error-handler.js";
-export * from "./core/batch.js";
-export * from "./core/pipeline.js";
+export * from "./core/index.js";
 
 // Readers
 export {
@@ -13,8 +9,23 @@ export {
   type JSONReaderOptions,
   JSONLReader,
   type JSONLReaderOptions,
+  NDJSONReader,
+  type NDJSONReaderOptions,
   ParquetReader,
   type ParquetReaderOptions,
+  ArrowReader,
+  type ArrowReaderOptions,
+  FeatherReader,
+  type FeatherReaderOptions,
+  mapArrowType,
+  normalizeArrowValue,
+  AvroReader,
+  type AvroReaderOptions,
+  mapAvroType,
+  normalizeAvroValue,
+  XMLReader,
+  type XMLReaderOptions,
+  coerceXmlPrimitive,
   XLSXReader,
   type XLSXReaderOptions,
   FileSystemReader,
@@ -22,6 +33,8 @@ export {
   type MultiFileReaderOptions,
   createReader,
   inferFormatFromPath as inferReaderFormatFromPath,
+  sniffFormatFromBuffer,
+  sniffFormatFromFile,
 } from "./readers/index.js";
 
 // Filesystem Subsystem
@@ -38,10 +51,21 @@ export {
   type CSVWriterOptions,
   JSONWriter,
   JSONLWriter,
+  NDJSONWriter,
   MarkdownWriter,
   type MarkdownWriterOptions,
   ParquetWriter,
   type ParquetWriterOptions,
+  ArrowWriter,
+  type ArrowWriterOptions,
+  FeatherWriter,
+  type FeatherWriterOptions,
+  AvroWriter,
+  type AvroWriterOptions,
+  inferAvroSchema,
+  XMLWriter,
+  type XMLWriterOptions,
+  escapeXml,
   XLSXWriter,
   type XLSXWriterOptions,
   TableWriter,
@@ -52,33 +76,7 @@ export {
 } from "./writers/index.js";
 
 // Transforms
-export * from "./transforms/select.js";
-export * from "./transforms/rename.js";
-export * from "./transforms/cast.js";
-export * from "./transforms/sample.js";
-export * from "./transforms/filter.js";
-export * from "./transforms/expression.js";
-export * from "./transforms/map.js";
-export * from "./transforms/limit.js";
-export * from "./transforms/offset.js";
-export * from "./transforms/tail.js";
-export * from "./transforms/top.js";
-export * from "./transforms/sort/index.js";
-export * from "./transforms/unique.js";
-export * from "./transforms/group.js";
-export * from "./transforms/count.js";
-export * from "./transforms/join/index.js";
-export * from "./transforms/window.js";
-export * from "./transforms/clean.js";
-export * from "./transforms/explode.js";
-export * from "./transforms/flatten.js";
-export * from "./transforms/partition.js";
-export * from "./transforms/split.js";
-export * from "./transforms/timeseries.js";
-export * from "./transforms/pivot.js";
-export * from "./transforms/unpivot.js";
-export * from "./transforms/fuzzy-join.js";
-export * from "./transforms/concat.js";
+export * from "./transforms/index.js";
 export * from "./cli/commands/explode.js";
 export * from "./cli/commands/flatten.js";
 export * from "./cli/commands/freq.js";
@@ -111,32 +109,15 @@ export * from "./cli/commands/mask.js";
 export * from "./cli/commands/test.js";
 export * from "./cli/commands/serve.js";
 export * from "./cli/commands/report.js";
+export * from "./cli/commands/formats.js";
 export * from "./cli/completion.js";
 
 // Planner & Optimizer
 export * from "./planner/index.js";
 
 // Analytics
-export * from "./analytics/stats.js";
-export * from "./analytics/reduce.js";
-export * from "./analytics/schema-inference.js";
-export * from "./analytics/semantic-types.js";
-export * from "./analytics/validator.js";
-export * from "./analytics/profiler.js";
-export * from "./analytics/correlation.js";
-export * from "./analytics/quantiles.js";
-export * from "./analytics/outliers.js";
-export * from "./analytics/crosstab.js";
-export * from "./analytics/regression.js";
-export * from "./analytics/rfm.js";
-export * from "./analytics/cohort.js";
-export * from "./analytics/funnel.js";
-export * from "./analytics/abtest.js";
-export * from "./analytics/pareto.js";
-export * from "./analytics/technical.js";
-export * from "./analytics/cluster.js";
-export * from "./analytics/entropy.js";
-export * from "./analytics/ngrams.js";
+export * from "./analytics/index.js";
+
 
 // DataOps & Security
 export * from "./dataops/generate.js";
@@ -171,5 +152,10 @@ export * from "./utils/progress.js";
 export * from "./utils/heap.js";
 export * from "./utils/ring-buffer.js";
 export * from "./utils/keystore.js";
+export { findClosestMatch } from "./utils/fuzzy.js";
 // MCP (Model Context Protocol) Server
 export * from "./mcp/index.js";
+
+// Default export for fluent programmatic API
+import { rowpipe } from "./core/pipeline.js";
+export default rowpipe;

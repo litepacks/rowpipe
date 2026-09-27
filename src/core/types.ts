@@ -76,6 +76,15 @@ export interface WriterOptions {
   upsert?: boolean;
   conflictColumns?: string[];
   truncate?: boolean;
+  dryRun?: boolean | number | string;
+  preview?: boolean | number | string;
+}
+
+export interface PipelinePreviewResult {
+  rows: Row[];
+  columns: string[];
+  types: Record<string, ColumnType>;
+  totalSampled: number;
 }
 
 export interface SheetMetadata {

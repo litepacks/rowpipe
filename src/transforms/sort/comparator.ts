@@ -21,6 +21,9 @@ export interface SortOptions {
 export interface SequencedRow {
   row: Row;
   seq: number;
+  k0?: unknown;
+  k1?: unknown;
+  keys?: unknown[];
 }
 
 /**
@@ -226,15 +229,126 @@ export function compareValues(
 }
 
 /**
- * Creates a deterministic, multi-column, stable row comparator.
+ * Pre-extracts and normalizes sort key from row value for single-pass O(N) key preparation.
+ * Avoids repeated character-by-character numeric parsing inside O(N log N) comparison loops.
+ */
+export function extractSortKey(val: unknown, spec: SortKeySpec): unknown {
+  if (val === null || val === undefined || val === "") {
+    return null;
+  }
+  if (typeof val === "number") {
+    return val;
+  }
+  if (typeof val === "string") {
+    const code = val.charCodeAt(0);
+    const isPotentiallyNum =
+      (code >= 48 && code <= 57) || code === 45 || code === 43 || code === 46;
+    if (isPotentiallyNum) {
+      const num = parseIfNumeric(val);
+      if (num !== null) {
+        return num;
+      }
+    }
+    if (spec.natural) {
+      return val;
+    }
+    if (spec.ignoreCase) {
+      return val.toLowerCase();
+    }
+    return val;
+  }
+  if (val instanceof Date) {
+    return val.getTime();
+  }
+  if (typeof val === "boolean") {
+    return val ? 1 : 0;
+  }
+  return val;
+}
+
+/**
+ * Fast comparison of two pre-extracted keys with typed fast paths.
+ */
+export function compareKeys(
+  kA: unknown,
+  kB: unknown,
+  spec: SortKeySpec
+): number {
+  if (kA === kB) return 0;
+
+  const isANull = kA === null || kA === undefined;
+  const isBNull = kB === null || kB === undefined;
+
+  if (isANull || isBNull) {
+    if (isANull && isBNull) return 0;
+    if (isANull) return spec.nulls === "first" ? -1 : 1;
+    return spec.nulls === "first" ? 1 : -1;
+  }
+
+  const typeA = typeof kA;
+  const typeB = typeof kB;
+
+  if (typeA === "number" && typeB === "number") {
+    return (kA as number) < (kB as number) ? -1 : 1;
+  }
+
+  if (typeA === "string" && typeB === "string") {
+    const strA = kA as string;
+    const strB = kB as string;
+    if (spec.natural) {
+      return strA.localeCompare(strB, undefined, {
+        numeric: true,
+        sensitivity: spec.ignoreCase ? "base" : "variant",
+      });
+    }
+    return strA < strB ? -1 : 1;
+  }
+
+  return compareValues(kA, kB, spec);
+}
+
+/**
+ * Creates a deterministic, multi-column, stable row comparator using pre-extracted keys.
  */
 export function createRowComparator(specs: SortKeySpec[]): (a: SequencedRow, b: SequencedRow) => number {
   if (specs.length === 1) {
     const spec = specs[0]!;
     const col = spec.column;
     const isDesc = spec.direction === "desc";
+    const nullsFirst = spec.nulls === "first";
+    const isNatural = Boolean(spec.natural);
+    const ignoreCase = Boolean(spec.ignoreCase);
+
     return (aObj: SequencedRow, bObj: SequencedRow): number => {
-      const cmp = compareValues(aObj.row[col], bObj.row[col], spec);
+      const kA = aObj.k0 !== undefined ? aObj.k0 : extractSortKey(aObj.row[col], spec);
+      const kB = bObj.k0 !== undefined ? bObj.k0 : extractSortKey(bObj.row[col], spec);
+
+      if (kA === kB) return aObj.seq - bObj.seq;
+
+      if (kA === null || kB === null) {
+        const cmp = kA === null ? (nullsFirst ? -1 : 1) : (nullsFirst ? 1 : -1);
+        return isDesc ? -cmp : cmp;
+      }
+
+      if (typeof kA === "number" && typeof kB === "number") {
+        const diff = kA < kB ? -1 : 1;
+        return isDesc ? -diff : diff;
+      }
+
+      if (typeof kA === "string" && typeof kB === "string") {
+        let diff: number;
+        if (isNatural) {
+          diff = kA.localeCompare(kB, undefined, {
+            numeric: true,
+            sensitivity: ignoreCase ? "base" : "variant",
+          });
+        } else {
+          diff = kA < kB ? -1 : 1;
+        }
+        return isDesc ? -diff : diff;
+      }
+
+      const cmp = compareValues(kA, kB, spec);
       if (cmp !== 0) return isDesc ? -cmp : cmp;
       return aObj.seq - bObj.seq;
     };
@@ -250,13 +364,16 @@ export function createRowComparator(specs: SortKeySpec[]): (a: SequencedRow, b: 
     const isDesc1 = spec1.direction === "desc";
 
     return (aObj: SequencedRow, bObj: SequencedRow): number => {
-      const a = aObj.row;
-      const b = bObj.row;
+      const kA0 = aObj.k0 !== undefined ? aObj.k0 : extractSortKey(aObj.row[col0], spec0);
+      const kB0 = bObj.k0 !== undefined ? bObj.k0 : extractSortKey(bObj.row[col0], spec0);
 
-      let cmp = compareValues(a[col0], b[col0], spec0);
+      let cmp = compareKeys(kA0, kB0, spec0);
       if (cmp !== 0) return isDesc0 ? -cmp : cmp;
 
-      cmp = compareValues(a[col1], b[col1], spec1);
+      const kA1 = aObj.k1 !== undefined ? aObj.k1 : extractSortKey(aObj.row[col1], spec1);
+      const kB1 = bObj.k1 !== undefined ? bObj.k1 : extractSortKey(bObj.row[col1], spec1);
+
+      cmp = compareKeys(kA1, kB1, spec1);
       if (cmp !== 0) return isDesc1 ? -cmp : cmp;
 
       return aObj.seq - bObj.seq;
@@ -264,12 +381,15 @@ export function createRowComparator(specs: SortKeySpec[]): (a: SequencedRow, b: 
   }
 
   return (aObj: SequencedRow, bObj: SequencedRow): number => {
-    const a = aObj.row;
-    const b = bObj.row;
+    const keysA = aObj.keys;
+    const keysB = bObj.keys;
 
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i]!;
-      const cmp = compareValues(a[spec.column], b[spec.column], spec);
+      const kA = keysA !== undefined ? keysA[i] : extractSortKey(aObj.row[spec.column], spec);
+      const kB = keysB !== undefined ? keysB[i] : extractSortKey(bObj.row[spec.column], spec);
+
+      const cmp = compareKeys(kA, kB, spec);
       if (cmp !== 0) {
         return spec.direction === "desc" ? -cmp : cmp;
       }
@@ -288,7 +408,9 @@ export function createRawRowComparator(specs: SortKeySpec[]): (a: Row, b: Row) =
     const col = spec.column;
     const isDesc = spec.direction === "desc";
     return (a: Row, b: Row): number => {
-      const cmp = compareValues(a[col], b[col], spec);
+      const kA = extractSortKey(a[col], spec);
+      const kB = extractSortKey(b[col], spec);
+      const cmp = compareKeys(kA, kB, spec);
       return isDesc ? -cmp : cmp;
     };
   }
@@ -303,10 +425,10 @@ export function createRawRowComparator(specs: SortKeySpec[]): (a: Row, b: Row) =
     const isDesc1 = spec1.direction === "desc";
 
     return (a: Row, b: Row): number => {
-      let cmp = compareValues(a[col0], b[col0], spec0);
+      let cmp = compareKeys(extractSortKey(a[col0], spec0), extractSortKey(b[col0], spec0), spec0);
       if (cmp !== 0) return isDesc0 ? -cmp : cmp;
 
-      cmp = compareValues(a[col1], b[col1], spec1);
+      cmp = compareKeys(extractSortKey(a[col1], spec1), extractSortKey(b[col1], spec1), spec1);
       if (cmp !== 0) return isDesc1 ? -cmp : cmp;
 
       return 0;
@@ -316,7 +438,7 @@ export function createRawRowComparator(specs: SortKeySpec[]): (a: Row, b: Row) =
   return (a: Row, b: Row): number => {
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i]!;
-      const cmp = compareValues(a[spec.column], b[spec.column], spec);
+      const cmp = compareKeys(extractSortKey(a[spec.column], spec), extractSortKey(b[spec.column], spec), spec);
       if (cmp !== 0) {
         return spec.direction === "desc" ? -cmp : cmp;
       }

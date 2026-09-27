@@ -96,6 +96,7 @@ _rowpipe() {
     'fetch:Stream tabular data from remote REST API'
     'http-get:Alias for fetch'
     'curl-stream:Alias for fetch'
+    'formats:List supported tabular and database formats and capabilities'
   )
 
   _arguments -C \
@@ -110,6 +111,12 @@ _rowpipe() {
       case $words[1] in
         convert|inspect|schema|stats|select|filter|map|reduce|diff|table|view|plot|chart|freq|explode|flatten|partition|split|timeseries|corr|quantiles|percentiles|outliers|anomalies|crosstab|regression|trend|rfm|cohort|funnel|abtest|pareto|technical|indicators|cluster|kmeans|entropy|importance|ngrams|tokens|pivot|pivot-table|crosstab-pivot|unpivot|melt|wide-to-long|fuzzy-join|fuzzyjoin|fuzzy|concat|stack|union-all|generate|mock|fake|synth|mask|anonymize|redact|test|assert|check|serve|api|http|report|summary-html|fetch|http-get|curl-stream)
           _files
+          ;;
+        formats)
+          _arguments \
+            '--json[Output format capabilities matrix as JSON]' \
+            '--markdown[Output format capabilities matrix as Markdown table]' \
+            '--category[Filter by category: Columnar, Binary, Text, Database, Presentation]'
           ;;
         completion)
           local -a shells
@@ -136,7 +143,7 @@ _rowpipe_completions() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  commands="inspect convert schema stats select rename cast filter map reduce sample validate diff files diff-files limit offset head tail sort top unique count group db join window profile clean explain view explode flatten freq plot chart table completion partition split timeseries corr quantiles percentiles outliers anomalies crosstab regression trend rfm cohort funnel abtest pareto technical indicators cluster kmeans entropy importance ngrams tokens pivot pivot-table crosstab-pivot unpivot melt wide-to-long fuzzy-join fuzzyjoin fuzzy concat stack union-all generate mock fake synth mask anonymize redact test assert check serve api http report summary-html fetch http-get curl-stream"
+  commands="inspect convert schema stats select rename cast filter map reduce sample validate diff files diff-files limit offset head tail sort top unique count group db join window profile clean explain view explode flatten freq plot chart table completion formats partition split timeseries corr quantiles percentiles outliers anomalies crosstab regression trend rfm cohort funnel abtest pareto technical indicators cluster kmeans entropy importance ngrams tokens pivot pivot-table crosstab-pivot unpivot melt wide-to-long fuzzy-join fuzzyjoin fuzzy concat stack union-all generate mock fake synth mask anonymize redact test assert check serve api http report summary-html fetch http-get curl-stream"
 
   if [ $COMP_CWORD -eq 1 ]; then
     COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -145,7 +152,7 @@ _rowpipe_completions() {
 
   case "$prev" in
     --from|--to)
-      COMPREPLY=( $(compgen -W "csv tsv psv json jsonl parquet xlsx markdown table db" -- "$cur") )
+      COMPREPLY=( $(compgen -W "csv tsv psv json jsonl ndjson parquet arrow feather avro xml xlsx markdown table db" -- "$cur") )
       return 0
       ;;
     completion)
@@ -167,15 +174,16 @@ export function generateFishCompletion(): string {
   return `# Fish completion for rowpipe
 complete -c rowpipe -f
 
-set -l commands inspect convert schema stats select rename cast filter map reduce sample validate diff files diff-files limit offset head tail sort top unique count group db join window profile clean explain view explode flatten freq plot chart table completion partition split timeseries corr quantiles percentiles outliers anomalies crosstab regression trend rfm cohort funnel abtest pareto technical indicators cluster kmeans entropy importance ngrams tokens pivot pivot-table crosstab-pivot unpivot melt wide-to-long fuzzy-join fuzzyjoin fuzzy concat stack union-all generate mock fake synth mask anonymize redact test assert check serve api http report summary-html fetch http-get curl-stream
+set -l commands inspect convert schema stats select rename cast filter map reduce sample validate diff files diff-files limit offset head tail sort top unique count group db join window profile clean explain view explode flatten freq plot chart table completion formats partition split timeseries corr quantiles percentiles outliers anomalies crosstab regression trend rfm cohort funnel abtest pareto technical indicators cluster kmeans entropy importance ngrams tokens pivot pivot-table crosstab-pivot unpivot melt wide-to-long fuzzy-join fuzzyjoin fuzzy concat stack union-all generate mock fake synth mask anonymize redact test assert check serve api http report summary-html fetch http-get curl-stream
 
 for cmd in $commands
   complete -c rowpipe -n "not __fish_seen_subcommand_from $commands" -a $cmd
 end
 
 complete -c rowpipe -n "__fish_seen_subcommand_from completion" -a "zsh bash fish"
-complete -c rowpipe -l from -d "Input format" -a "csv tsv psv json jsonl parquet xlsx"
-complete -c rowpipe -l to -d "Output format" -a "csv tsv psv json jsonl parquet xlsx markdown table"
+complete -c rowpipe -l from -d "Input format" -a "csv tsv psv json jsonl ndjson parquet arrow feather avro xml xlsx"
+complete -c rowpipe -l to -d "Output format" -a "csv tsv psv json jsonl ndjson parquet arrow feather avro xml xlsx markdown table"
+
 complete -c rowpipe -l json -d "Output JSON"
 complete -c rowpipe -l help -s h -d "Show help"
 complete -c rowpipe -l version -s V -d "Show version"
@@ -193,4 +201,92 @@ export function generateCompletion(shell: string): string {
     default:
       throw new Error(`Unsupported shell: "${shell}". Supported shells: zsh, bash, fish`);
   }
+}
+
+export interface InstallCompletionResult {
+  success: boolean;
+  shell: string;
+  targetFile: string;
+  alreadyInstalled: boolean;
+}
+
+/**
+ * Automatically installs rowpipe shell completion into the user's RC file or Fish completion dir.
+ */
+export async function installCompletion(targetShell?: string): Promise<InstallCompletionResult> {
+  const { mkdir, readFile, writeFile, stat } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (!home) {
+    throw new Error("Cannot determine user home directory (HOME environment variable not set)");
+  }
+
+  // Detect shell if not explicitly provided
+  let detectedShell = targetShell?.toLowerCase();
+  if (!detectedShell) {
+    const envShell = process.env.SHELL || "";
+    if (envShell.includes("zsh")) {
+      detectedShell = "zsh";
+    } else if (envShell.includes("fish")) {
+      detectedShell = "fish";
+    } else {
+      detectedShell = "bash";
+    }
+  }
+
+  if (detectedShell === "fish") {
+    const fishCompletionsDir = join(home, ".config", "fish", "completions");
+    await mkdir(fishCompletionsDir, { recursive: true });
+    const targetFile = join(fishCompletionsDir, "rowpipe.fish");
+    const script = generateFishCompletion();
+    await writeFile(targetFile, script, "utf-8");
+    return {
+      success: true,
+      shell: "fish",
+      targetFile,
+      alreadyInstalled: false,
+    };
+  }
+
+  const scriptHook = `\n# rowpipe shell completion\neval "$(rowpipe completion ${detectedShell})"\n`;
+  const marker = "rowpipe completion";
+
+  let targetRc = detectedShell === "zsh"
+    ? join(home, ".zshrc")
+    : join(home, ".bashrc");
+
+  if (detectedShell === "bash" && process.platform === "darwin") {
+    const bashProfile = join(home, ".bash_profile");
+    try {
+      await stat(bashProfile);
+      targetRc = bashProfile;
+    } catch {
+      // default to .bashrc
+    }
+  }
+
+  let content = "";
+  try {
+    content = await readFile(targetRc, "utf-8");
+  } catch {
+    content = "";
+  }
+
+  if (content.includes(marker)) {
+    return {
+      success: true,
+      shell: detectedShell,
+      targetFile: targetRc,
+      alreadyInstalled: true,
+    };
+  }
+
+  await writeFile(targetRc, content + scriptHook, "utf-8");
+  return {
+    success: true,
+    shell: detectedShell,
+    targetFile: targetRc,
+    alreadyInstalled: false,
+  };
 }

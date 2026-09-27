@@ -9,9 +9,13 @@ import { MarkdownWriter } from "./markdown.js";
 import { ParquetWriter } from "./parquet.js";
 import { XLSXWriter } from "./xlsx.js";
 import { TableWriter } from "./table.js";
+import { ArrowWriter, FeatherWriter } from "./arrow.js";
+import { AvroWriter } from "./avro.js";
+import { XMLWriter } from "./xml.js";
 
 import { isDatabaseUrl } from "../db/url.js";
 import { DatabaseWriter } from "../db/sink.js";
+import { findClosestMatch } from "../utils/fuzzy.js";
 
 export * from "../db/sink.js";
 export * from "./csv.js";
@@ -21,6 +25,9 @@ export * from "./markdown.js";
 export * from "./parquet.js";
 export * from "./xlsx.js";
 export * from "./table.js";
+export * from "./arrow.js";
+export * from "./avro.js";
+export * from "./xml.js";
 
 const adapters: Record<string, FormatAdapter> = {
   table: {
@@ -81,6 +88,38 @@ const adapters: Record<string, FormatAdapter> = {
     },
     createWriter: (output, options) => new ParquetWriter(output, options),
   },
+  arrow: {
+    name: "Arrow",
+    extensions: [".arrow"],
+    createReader: () => {
+      throw new Error("Reader adapter called from writer");
+    },
+    createWriter: (output, options) => new ArrowWriter(output, options),
+  },
+  feather: {
+    name: "Feather",
+    extensions: [".feather"],
+    createReader: () => {
+      throw new Error("Reader adapter called from writer");
+    },
+    createWriter: (output, options) => new ArrowWriter(output, { ...options, format: "feather" }),
+  },
+  avro: {
+    name: "Avro",
+    extensions: [".avro"],
+    createReader: () => {
+      throw new Error("Reader adapter called from writer");
+    },
+    createWriter: (output, options) => new AvroWriter(output, options),
+  },
+  xml: {
+    name: "XML",
+    extensions: [".xml"],
+    createReader: () => {
+      throw new Error("Reader adapter called from writer");
+    },
+    createWriter: (output, options) => new XMLWriter(output, options),
+  },
   json: {
     name: "JSON",
     extensions: [".json"],
@@ -91,7 +130,15 @@ const adapters: Record<string, FormatAdapter> = {
   },
   jsonl: {
     name: "JSONL",
-    extensions: [".jsonl", ".ndjson", ".ldjson"],
+    extensions: [".jsonl", ".ldjson"],
+    createReader: () => {
+      throw new Error("Reader adapter called from writer");
+    },
+    createWriter: (output, options) => new JSONLWriter(output),
+  },
+  ndjson: {
+    name: "NDJSON",
+    extensions: [".ndjson"],
     createReader: () => {
       throw new Error("Reader adapter called from writer");
     },
@@ -115,7 +162,11 @@ const adapters: Record<string, FormatAdapter> = {
       if (typeof output !== "string") {
         throw new InvalidArgumentError("Database writer requires a connection URL or file path");
       }
-      return new DatabaseWriter(output, { table: options?.table || "", ...options });
+      return new DatabaseWriter(output, {
+        table: options?.table || "",
+        ...options,
+        dryRun: options?.dryRun ? Boolean(options.dryRun) : undefined,
+      });
     },
   },
   database: {
@@ -128,7 +179,11 @@ const adapters: Record<string, FormatAdapter> = {
       if (typeof output !== "string") {
         throw new InvalidArgumentError("Database writer requires a connection URL or file path");
       }
-      return new DatabaseWriter(output, { table: options?.table || "", ...options });
+      return new DatabaseWriter(output, {
+        table: options?.table || "",
+        ...options,
+        dryRun: options?.dryRun ? Boolean(options.dryRun) : undefined,
+      });
     },
   },
 };
@@ -160,7 +215,11 @@ export function createWriter(
 
   if (!format && typeof output === "string" && output !== "-") {
     if (isDatabaseUrl(output)) {
-      return new DatabaseWriter(output, { table: options?.table || "", ...options });
+      return new DatabaseWriter(output, {
+        table: options?.table || "",
+        ...options,
+        dryRun: options?.dryRun ? Boolean(options.dryRun) : undefined,
+      });
     }
     format = inferFormatFromPath(output) ?? undefined;
   }
@@ -171,8 +230,10 @@ export function createWriter(
 
   const adapter = adapters[format];
   if (!adapter) {
+    const suggestion = findClosestMatch(format, Object.keys(adapters));
+    const didYouMean = suggestion ? ` Did you mean "${suggestion}"?` : "";
     throw new InvalidArgumentError(
-      `Unsupported output format: "${format}". Supported formats are: ${Object.keys(adapters).join(", ")}`
+      `Unsupported output format: "${format}".${didYouMean} Supported formats are: ${Object.keys(adapters).join(", ")}`
     );
   }
 

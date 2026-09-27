@@ -17,11 +17,11 @@ function isPlainObject(val: unknown): val is Record<string, unknown> {
   );
 }
 
-function flattenObject(
+export function flattenObject(
   obj: Record<string, unknown>,
-  separator: string,
-  maxDepth: number,
-  flattenArrays: boolean,
+  separator = ".",
+  maxDepth = 10,
+  flattenArrays = false,
   currentDepth = 1,
   prefix = ""
 ): Row {

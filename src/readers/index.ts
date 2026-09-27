@@ -8,19 +8,28 @@ import { JSONReader } from "./json.js";
 import { JSONLReader } from "./jsonl.js";
 import { ParquetReader } from "./parquet.js";
 import { XLSXReader } from "./xlsx.js";
+import { ArrowReader, FeatherReader } from "./arrow.js";
+import { AvroReader } from "./avro.js";
+import { XMLReader } from "./xml.js";
 
 import { isDatabaseUrl } from "../db/url.js";
 import { DatabaseReader } from "../db/source.js";
 import { MultiFileReader, isGlobPattern } from "./multi-file.js";
+import { sniffFormatFromFile } from "./sniff.js";
+import { findClosestMatch } from "../utils/fuzzy.js";
 
 export * from "../files/reader.js";
 export * from "../db/source.js";
 export * from "./multi-file.js";
+export * from "./sniff.js";
 export * from "./csv.js";
 export * from "./json.js";
 export * from "./jsonl.js";
 export * from "./parquet.js";
 export * from "./xlsx.js";
+export * from "./arrow.js";
+export * from "./avro.js";
+export * from "./xml.js";
 
 const adapters: Record<string, FormatAdapter> = {
   csv: {
@@ -57,6 +66,38 @@ const adapters: Record<string, FormatAdapter> = {
       throw new Error("Writer adapter called from reader");
     },
   },
+  arrow: {
+    name: "Arrow",
+    extensions: [".arrow"],
+    createReader: (input, options) => new ArrowReader(input, options),
+    createWriter: () => {
+      throw new Error("Writer adapter called from reader");
+    },
+  },
+  feather: {
+    name: "Feather",
+    extensions: [".feather"],
+    createReader: (input, options) => new ArrowReader(input, { ...options, format: "feather" }),
+    createWriter: () => {
+      throw new Error("Writer adapter called from reader");
+    },
+  },
+  avro: {
+    name: "Avro",
+    extensions: [".avro"],
+    createReader: (input, options) => new AvroReader(input, options),
+    createWriter: () => {
+      throw new Error("Writer adapter called from reader");
+    },
+  },
+  xml: {
+    name: "XML",
+    extensions: [".xml"],
+    createReader: (input, options) => new XMLReader(input, options),
+    createWriter: () => {
+      throw new Error("Writer adapter called from reader");
+    },
+  },
   json: {
     name: "JSON",
     extensions: [".json"],
@@ -67,8 +108,16 @@ const adapters: Record<string, FormatAdapter> = {
   },
   jsonl: {
     name: "JSONL",
-    extensions: [".jsonl", ".ndjson", ".ldjson"],
+    extensions: [".jsonl", ".ldjson"],
     createReader: (input, options) => new JSONLReader(input, options),
+    createWriter: () => {
+      throw new Error("Writer adapter called from reader");
+    },
+  },
+  ndjson: {
+    name: "NDJSON",
+    extensions: [".ndjson"],
+    createReader: (input, options) => new JSONLReader(input, { ...options, format: "ndjson" }),
     createWriter: () => {
       throw new Error("Writer adapter called from reader");
     },
@@ -136,7 +185,7 @@ const adapters: Record<string, FormatAdapter> = {
 };
 
 /**
- * Infers format name from file path or extension.
+ * Infers format name from file path or extension, with fallback to magic byte sniffing.
  */
 export function inferFormatFromPath(filePath: string): string | null {
   if (isDatabaseUrl(filePath)) {
@@ -148,6 +197,15 @@ export function inferFormatFromPath(filePath: string): string | null {
       return format;
     }
   }
+
+  // Fallback to magic byte sniffing if file exists on disk
+  if (filePath !== "-") {
+    const sniffed = sniffFormatFromFile(filePath);
+    if (sniffed) {
+      return sniffed;
+    }
+  }
+
   return null;
 }
 
@@ -180,8 +238,10 @@ export function createReader(
 
   const adapter = adapters[format];
   if (!adapter) {
+    const suggestion = findClosestMatch(format, Object.keys(adapters));
+    const didYouMean = suggestion ? ` Did you mean "${suggestion}"?` : "";
     throw new InvalidArgumentError(
-      `Unsupported input format: "${format}". Supported formats are: ${Object.keys(adapters).join(", ")}`
+      `Unsupported input format: "${format}".${didYouMean} Supported formats are: ${Object.keys(adapters).join(", ")}`
     );
   }
 

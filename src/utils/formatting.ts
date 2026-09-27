@@ -117,5 +117,9 @@ export function safeJsonReplacer(_key: string, value: unknown): unknown {
 }
 
 export function safeJsonStringify(value: unknown, space?: number | string): string {
-  return JSON.stringify(value, safeJsonReplacer, space);
+  try {
+    return JSON.stringify(value, undefined, space);
+  } catch {
+    return JSON.stringify(value, safeJsonReplacer, space);
+  }
 }

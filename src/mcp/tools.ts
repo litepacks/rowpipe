@@ -11,6 +11,7 @@ import { createPipeline } from "../core/pipeline.js";
 import { createReader, inferFormatFromPath } from "../readers/index.js";
 import { sampleRows } from "../transforms/sample.js";
 import { formatBytes, formatDecimal, formatNumber, formatTable } from "../utils/formatting.js";
+import { SUPPORTED_FORMATS } from "../cli/commands/formats.js";
 import type { Row } from "../core/types.js";
 
 /**
@@ -21,13 +22,14 @@ import type { Row } from "../core/types.js";
 export const inspectToolDefinition = {
   name: "rowpipe_inspect",
   description:
-    "Inspect a tabular data file (CSV, TSV, JSON, JSONL, Parquet, XLSX) to retrieve file size, row count, column count, types, null percentages, approximate distinct percentages, or sheet summaries.",
+    "Inspect a tabular data file (CSV, TSV, PSV, JSON, JSONL, NDJSON, Parquet, Arrow, Feather, Avro, XML, XLSX) to retrieve file size, row count, column count, types, null percentages, approximate distinct percentages, or sheet summaries.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element (e.g. 'products.product')"),
     sheet: z.string().optional().describe("For XLSX workbooks, the specific sheet name to inspect"),
     delimiter: z.string().optional().describe("Custom delimiter character for delimited text files (e.g. ',', ';', '\\t')"),
   }),
-  handler: async (args: { filePath: string; sheet?: string; delimiter?: string }) => {
+  handler: async (args: { filePath: string; path?: string; sheet?: string; delimiter?: string }) => {
     let fileSize: number | undefined;
     try {
       const fileStat = await stat(args.filePath);
@@ -39,6 +41,7 @@ export const inspectToolDefinition = {
     const format = inferFormatFromPath(args.filePath) || "csv";
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -111,9 +114,10 @@ export const inspectToolDefinition = {
 export const queryToolDefinition = {
   name: "rowpipe_query",
   description:
-    "Stream-query and transform tabular data with filter expressions, column selection, renaming, mapped expressions, casting, sorting, and pagination in bounded O(1) memory.",
+    "Stream-query and transform tabular data (CSV, TSV, JSON, JSONL, NDJSON, Parquet, Arrow, Avro, XML, XLSX) with filter expressions, column selection, renaming, mapped expressions, casting, sorting, and pagination in bounded O(1) memory.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element (e.g. 'products.product')"),
     filter: z.union([z.string(), z.array(z.string())]).optional().describe("Filter expression(s), e.g. 'age > 30' or 'country == \"TR\"'"),
     select: z.union([z.string(), z.array(z.string())]).optional().describe("Column(s) to select, e.g. 'id,name,age' or ['id', 'name']"),
     rename: z.union([z.string(), z.array(z.string())]).optional().describe("Column rename expressions, e.g. 'old_name=new_name'"),
@@ -128,6 +132,7 @@ export const queryToolDefinition = {
   }),
   handler: async (args: {
     filePath: string;
+    path?: string;
     filter?: string | string[];
     select?: string | string[];
     rename?: string | string[];
@@ -157,6 +162,7 @@ export const queryToolDefinition = {
 
     const reader = createReader(args.filePath, {
       format: fromFormat,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -202,18 +208,20 @@ export const queryToolDefinition = {
 export const schemaToolDefinition = {
   name: "rowpipe_schema",
   description:
-    "Infer accurate schema, SQL data types, null rates, and semantic types (email, url, uuid, date, etc.) for any tabular dataset.",
+    "Infer accurate schema, SQL data types, null rates, and semantic types for any tabular dataset across all supported formats (CSV, TSV, JSON, JSONL, NDJSON, Parquet, Arrow, Avro, XML, XLSX).",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element"),
     sample: z.number().optional().describe("Maximum rows to scan for schema inference (default: 10000)"),
     sheet: z.string().optional().describe("For XLSX workbooks, sheet name"),
     delimiter: z.string().optional().describe("Custom delimiter"),
   }),
-  handler: async (args: { filePath: string; sample?: number; sheet?: string; delimiter?: string }) => {
+  handler: async (args: { filePath: string; path?: string; sample?: number; sheet?: string; delimiter?: string }) => {
     const sampleLimit = Math.max(1, args.sample ?? 10000);
     const format = inferFormatFromPath(args.filePath) || "csv";
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -238,17 +246,19 @@ export const schemaToolDefinition = {
 export const statsToolDefinition = {
   name: "rowpipe_stats",
   description:
-    "Calculate summary statistics (min, max, mean, sum, quantiles, approx distinct, null count) for numeric and string columns.",
+    "Calculate summary statistics (min, max, mean, sum, quantiles, approx distinct, null count) for numeric and string columns across all tabular formats.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element"),
     column: z.string().optional().describe("Specific column name to compute stats for (default: all columns)"),
     sheet: z.string().optional().describe("For XLSX workbooks, sheet name"),
     delimiter: z.string().optional().describe("Custom delimiter"),
   }),
-  handler: async (args: { filePath: string; column?: string; sheet?: string; delimiter?: string }) => {
+  handler: async (args: { filePath: string; path?: string; column?: string; sheet?: string; delimiter?: string }) => {
     const format = inferFormatFromPath(args.filePath) || "csv";
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -273,9 +283,10 @@ export const statsToolDefinition = {
 export const sampleToolDefinition = {
   name: "rowpipe_sample",
   description:
-    "Perform reservoir sampling on a tabular dataset with bounded O(k) memory and optional deterministic random seed.",
+    "Perform reservoir sampling on a tabular dataset with bounded O(k) memory and optional deterministic random seed across all supported formats.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element"),
     size: z.number().optional().describe("Number of sample rows to retrieve (default: 10)"),
     seed: z.number().optional().describe("Deterministic random seed integer"),
     sheet: z.string().optional().describe("For XLSX workbooks, sheet name"),
@@ -284,6 +295,7 @@ export const sampleToolDefinition = {
   }),
   handler: async (args: {
     filePath: string;
+    path?: string;
     size?: number;
     seed?: number;
     sheet?: string;
@@ -294,6 +306,7 @@ export const sampleToolDefinition = {
     const format = inferFormatFromPath(args.filePath) || "csv";
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -338,20 +351,37 @@ export const sampleToolDefinition = {
 export const convertToolDefinition = {
   name: "rowpipe_convert",
   description:
-    "Convert tabular datasets between formats (CSV, TSV, JSON, JSONL, Parquet, XLSX, Markdown) with high throughput streaming.",
+    "Convert tabular datasets between formats (CSV, TSV, PSV, JSON, JSONL, NDJSON, Parquet, Arrow, Feather, Avro, XML, XLSX, Markdown) with high throughput streaming.",
   inputSchema: z.object({
     inputPath: z.string().describe("Source file path"),
-    outputPath: z.string().describe("Target file path (extension determines format: .csv, .json, .parquet, .xlsx, .md)"),
+    outputPath: z.string().describe("Target file path (extension determines format: .csv, .json, .ndjson, .parquet, .arrow, .avro, .xml, .xlsx, .md)"),
+    path: z.string().optional().describe("For XML input, repeating record element path (e.g. 'products.product')"),
+    xmlRoot: z.string().optional().describe("For XML target, root element tag name (default: 'records')"),
+    xmlRow: z.string().optional().describe("For XML target, record element tag name (default: 'record')"),
+    compression: z.string().optional().describe("Target compression method (e.g. 'gzip', 'zstd', 'deflate', 'snappy')"),
     sheet: z.string().optional().describe("For XLSX input/output, sheet name"),
     delimiter: z.string().optional().describe("Custom delimiter for delimited formats"),
   }),
-  handler: async (args: { inputPath: string; outputPath: string; sheet?: string; delimiter?: string }) => {
+  handler: async (args: {
+    inputPath: string;
+    outputPath: string;
+    path?: string;
+    xmlRoot?: string;
+    xmlRow?: string;
+    compression?: string;
+    sheet?: string;
+    delimiter?: string;
+  }) => {
     await convertCommand(args.inputPath, args.outputPath, {
+      path: args.path,
+      xmlRoot: args.xmlRoot,
+      xmlRow: args.xmlRow,
+      compression: args.compression,
       sheet: args.sheet,
       delimiter: args.delimiter,
       quiet: true,
       noProgress: true,
-    });
+    } as any);
 
     const targetStat = await stat(args.outputPath);
     return {
@@ -438,9 +468,10 @@ export const diffToolDefinition = {
 export const profileToolDefinition = {
   name: "rowpipe_profile",
   description:
-    "Comprehensive data profile with type inference, null percentages, distinct counts, distributions, and quality warnings.",
+    "Comprehensive data profile with type inference, null percentages, distinct counts, distributions, and quality warnings across all tabular formats.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element"),
     sample: z.number().optional().describe("Maximum rows to profile (default: all)"),
     sheet: z.string().optional().describe("Sheet name for XLSX workbooks"),
     delimiter: z.string().optional().describe("Custom delimiter"),
@@ -448,6 +479,7 @@ export const profileToolDefinition = {
   }),
   handler: async (args: {
     filePath: string;
+    path?: string;
     sample?: number;
     sheet?: string;
     delimiter?: string;
@@ -458,6 +490,7 @@ export const profileToolDefinition = {
 
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -486,9 +519,10 @@ export const profileToolDefinition = {
 // 9. rowpipe_table
 export const tableToolDefinition = {
   name: "rowpipe_table",
-  description: "Render a clean, aligned tabular preview of a dataset with optional filtering and column selection.",
+  description: "Render a clean, aligned tabular preview of a dataset with optional filtering and column selection across all formats.",
   inputSchema: z.object({
     filePath: z.string().describe("Path to the tabular data file"),
+    path: z.string().optional().describe("For XML files, dot-path of repeating record element"),
     limit: z.number().optional().describe("Maximum rows to preview (default: 20)"),
     filter: z.string().optional().describe("Filter expression (e.g. 'age >= 21')"),
     select: z.string().optional().describe("Comma-separated list of columns to display"),
@@ -497,6 +531,7 @@ export const tableToolDefinition = {
   }),
   handler: async (args: {
     filePath: string;
+    path?: string;
     limit?: number;
     filter?: string;
     select?: string;
@@ -514,6 +549,7 @@ export const tableToolDefinition = {
     const format = inferFormatFromPath(args.filePath) || "csv";
     const reader = createReader(args.filePath, {
       format,
+      path: args.path,
       sheet: args.sheet,
       delimiter: args.delimiter,
       filePath: args.filePath,
@@ -542,6 +578,37 @@ export const tableToolDefinition = {
   },
 };
 
+// 10. rowpipe_formats
+export const formatsToolDefinition = {
+  name: "rowpipe_formats",
+  description:
+    "List all 16 supported tabular, columnar, binary, and database formats with their streaming read/write, compression, schema, and nested path capabilities.",
+  inputSchema: z.object({
+    category: z.string().optional().describe("Filter by category: Columnar, Binary, Text, Database, Presentation"),
+    format: z.enum(["json", "markdown"]).optional().describe("Output representation: 'json' (default) or 'markdown'"),
+  }),
+  handler: async (args: { category?: string; format?: "json" | "markdown" }) => {
+    let list = SUPPORTED_FORMATS;
+    if (args.category) {
+      const cat = args.category.toLowerCase();
+      list = list.filter((f) => f.category.toLowerCase() === cat);
+    }
+    if (args.format === "markdown") {
+      const header = "| Format | Name | Category | Read | Write | Compression | Schema | Nested |";
+      const divider = "|:---|:---|:---|:---|:---|:---|:---|:---|";
+      const lines = list.map(
+        (f) =>
+          `| **${f.format}** | ${f.name} | ${f.category} | ${f.read} | ${f.write} | ${f.compression} | ${f.schema} | ${f.nested} |`
+      );
+      return [header, divider, ...lines].join("\n");
+    }
+    return {
+      totalFormats: list.length,
+      formats: list,
+    };
+  },
+};
+
 export const allRowpipeTools = [
   inspectToolDefinition,
   queryToolDefinition,
@@ -552,4 +619,5 @@ export const allRowpipeTools = [
   diffToolDefinition,
   profileToolDefinition,
   tableToolDefinition,
+  formatsToolDefinition,
 ];
